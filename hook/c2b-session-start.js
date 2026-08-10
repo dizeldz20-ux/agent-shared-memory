@@ -29,7 +29,7 @@ Mapped: ${layers} | ${b.nodes.length} nodes${stale}
 STANDING RULE for this session — recall before you read:
 - Before the first Read/Edit of any file in a mapped project, call mcp__c2b__brain_context(file_path).
   Its vault_pages field returns what a human already wrote about that file: the traps, the decisions.
-  Read that page BEFORE editing. This is rung 0, above CodeGraph and grep.
+  Read that page BEFORE editing. This is rung 0, above any code-graph tool and grep.
 - Starting a task on a topic? mcp__c2b__brain_search(topic) first.
 - Changing something shared? mcp__c2b__brain_neighbors(node_id) for the blast radius.
 - Works with the visualization server down; it reads brain.json from disk.

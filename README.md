@@ -38,6 +38,7 @@ The point is not the picture. The point is that **recall happens before code is 
 | `server.py` | Optional visualization/activity server on `:8930` — graph API, WebSocket fanout, persisted `events.jsonl` history. |
 | `frontend/` | React + react-force-graph: anatomical 3D connectome, 2D network, and cortical-rings views. RTL, keyboard accessible, reduced-motion aware, with a sanitized demo mode. |
 | `refresh.ps1` | Re-extract → re-merge → atomically redeploy runtime copies → hot-reload the running server. |
+| [`skills/`](skills/) | **The protocol layer** — `c2b-brain` (when to call which tool, how to read the result, how to keep the graph true) and `graph-mission` (compile a complex request into a typed mission graph with the brain as rung 0 of recall, an evidence gate, and a run file that survives compaction). |
 
 ## The recall protocol
 
