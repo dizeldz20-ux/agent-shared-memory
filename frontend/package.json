@@ -1,0 +1,30 @@
+{
+  "name": "c2b-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "build:preview": "tsc -b && vite build --mode preview",
+    "demo:data": "node scripts/build-demo-graph.mjs",
+    "test:unit": "node --test scripts/*.test.mjs",
+    "test:e2e": "node scripts/c2b-e2e.mjs",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "react-force-graph-2d": "^1.29.1",
+    "react-force-graph-3d": "^1.27.0",
+    "three": "^0.185.1"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^4.5.0",
+    "playwright-core": "^1.62.1",
+    "typescript": "~5.8.0",
+    "vite": "^6.3.5"
+  }
+}

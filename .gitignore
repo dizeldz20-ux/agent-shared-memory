@@ -1,0 +1,9 @@
+node_modules/
+dist/
+data/
+.venv/
+__pycache__/
+artifacts/
+*.log
+*.tsbuildinfo
+sources.json

@@ -1,0 +1,26 @@
+{
+  "$comment": "Copy to sources.json and point at YOUR projects. Paths are relative to this repo (absolute paths work too). 'vault' is your Obsidian vault with an okf/ bundle (see docs/vault-structure.md) — set to null for a code-only brain.",
+  "vault": "../YourVault",
+  "layers": {
+    "api": "API",
+    "web": "Web",
+    "ops": "Ops",
+    "lab": "Lab",
+    "c2b": "C2B"
+  },
+  "xlayerTags": {
+    "api": ["api", "backend", "server"],
+    "web": ["web", "frontend"],
+    "ops": ["ops", "infra", "monitoring"],
+    "lab": ["lab", "experiments"],
+    "c2b": ["c2b", "second-brain"]
+  },
+  "sources": [
+    { "layer": "api", "raw": "api-core", "base": "../your-api-project", "prefix": "" },
+    { "layer": "web", "raw": "web-frontend", "base": "../your-web-app/frontend", "prefix": "frontend/" },
+    { "layer": "web", "raw": "web-backend", "base": "../your-web-app/backend", "prefix": "backend/" },
+    { "layer": "ops", "raw": "ops-core", "base": "../your-ops-project", "prefix": "" },
+    { "layer": "lab", "raw": "lab-core", "base": "../your-lab-project", "prefix": "" },
+    { "layer": "c2b", "raw": "c2b-self", "base": ".", "prefix": "" }
+  ]
+}
