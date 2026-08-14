@@ -20,7 +20,7 @@ try {
     .join(' ');
   const ageDays = Math.floor((Date.now() - Date.parse(b.generatedAt)) / 86400000);
   // 3d, not 7: the Stop hook refreshes daily (debounced), so >=3d means the automation broke.
-  const stale = ageDays >= 3 ? `  (${ageDays}d old — run refresh.ps1)` : '';
+  const stale = ageDays >= 3 ? `  (${ageDays}d old — run the C2B refresh script)` : '';
 
   process.stdout.write(
 `C2B SECOND BRAIN — ONLINE. Unified graph of the Obsidian vault + all mapped project code.

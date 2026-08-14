@@ -37,7 +37,8 @@ The point is not the picture. The point is that **recall happens before code is 
 | `hook/c2b-hook.js` | PostToolUse hook: streams every file Claude touches to the server; when the server is down, events buffer to `pending.jsonl` and drain on next start — no activity is lost. |
 | `server.py` | Optional visualization/activity server on `:8930` — graph API, WebSocket fanout, persisted `events.jsonl` history. |
 | `frontend/` | React + react-force-graph: anatomical 3D connectome, 2D network, and cortical-rings views. RTL, keyboard accessible, reduced-motion aware, with a sanitized demo mode. |
-| `refresh.ps1` | Re-extract → re-merge → atomically redeploy runtime copies → hot-reload the running server. |
+| `refresh.sh` / `refresh.ps1` | Re-extract → re-merge → atomically redeploy runtime copies → hot-reload the running server. Same steps on either platform; the `.sh` also rebuilds the vault's `okf/` bundle first. |
+| `hook/c2b-session-doc.js` | Optional Stop hook: a session that **mutated files** may not end undocumented. Fires at most once per session, never blocks a read-only one, and stays silent until a vault is configured. |
 | [`skills/`](skills/) | **The protocol layer** — `c2b-brain` (when to call which tool, how to read the result, how to keep the graph true) and `graph-mission` (compile a complex request into a typed mission graph with the brain as rung 0 of recall, an evidence gate, and a run file that survives compaction). |
 
 ## The recall protocol
@@ -53,12 +54,12 @@ The brain is **rung 0** of the recall ladder — above code-graph tools and grep
 
 ## Requirements
 
-- **Python 3.11+** and [uv](https://docs.astral.sh/uv/)
+- **Python 3.11+** and [uv](https://docs.astral.sh/uv/). Run everything through `uv run` — it provisions its own 3.11, which matters on macOS, where the system interpreter is 3.9 and `mcp_server.py` does not parse under it.
 - **Node.js 24+** (the unit tests import TypeScript directly via type stripping)
 - **[graphifyy](https://pypi.org/project/graphifyy/)** — `uv tool install graphifyy` (local tree-sitter AST extraction, no LLM, respects `.gitignore`)
 - **[Claude Code](https://claude.com/claude-code)** — the hooks and MCP registration target its config
 - **An Obsidian vault** for the knowledge layer — the vault **is the memory layer of the brain**. It must carry an `okf/` bundle (a machine-readable catalog of your pages). The expected structure and the exact JSON contract are documented in [docs/vault-structure.md](docs/vault-structure.md). No vault? Set `"vault": null` in `sources.json` and you get a code-only brain — but the knowledge layer is the half that makes recall worth it.
-- Windows-first: the refresh scripts are PowerShell. Everything else (Python, Node, hooks) is cross-platform; porting `refresh.ps1` to bash is a ten-line exercise.
+- **macOS / Linux / Windows.** The refresh and start scripts ship twice — `refresh.sh` + `start-c2b.sh` (bash) and `refresh.ps1` + `start-c2b.ps1` (PowerShell). Everything else (Python, Node, hooks) is cross-platform. Use whichever pair matches your shell; the two do the same work in the same order.
 
 ## Quick start
 
@@ -66,9 +67,14 @@ The brain is **rung 0** of the recall ladder — above code-graph tools and grep
 
 **2. Extract + merge:**
 
+```bash
+uv tool install graphifyy
+./refresh.sh         # graphify extract per source → merge.py → deploy to ~/.claude/c2b
+```
+
 ```powershell
 uv tool install graphifyy
-./refresh.ps1        # graphify extract per source → merge.py → deploy to ~/.claude/c2b
+./refresh.ps1        # same, on Windows
 ```
 
 Projects without a git repo need a `.graphifyignore` (like this repo's) so `node_modules`/build output stay out of the graph.
@@ -86,7 +92,8 @@ claude mcp add --scope user c2b -- uv run --directory <home>/.claude/c2b python 
   "hooks": {
     "SessionStart": [{ "hooks": [{ "type": "command", "command": "node \"<home>/.claude/hooks/c2b-session-start.js\"" }] }],
     "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "node \"<home>/.claude/hooks/c2b-prompt-hook.js\"" }] }],
-    "PostToolUse": [{ "hooks": [{ "type": "command", "command": "node \"<home>/.claude/hooks/c2b-hook.js\"", "async": true }] }]
+    "PostToolUse": [{ "hooks": [{ "type": "command", "command": "node \"<home>/.claude/hooks/c2b-hook.js\"", "async": true }] }],
+    "Stop": [{ "hooks": [{ "type": "command", "command": "node \"<home>/.claude/hooks/c2b-session-doc.js\"" }] }]
   },
   "permissions": { "allow": ["mcp__c2b__*"] }
 }
@@ -96,12 +103,16 @@ The `mcp__c2b__*` allow rule matters: without it every brain call prompts for pe
 
 **5. (Optional) run the visualization:**
 
-```powershell
+```bash
 cd frontend && npm ci && npm run build && cd ..
 uv run uvicorn server:app --port 8930    # serves the built UI + live activity
 ```
 
-**6. Keep it fresh.** Re-run `refresh.ps1` after structural code changes, or schedule it (nightly task, or a debounced wrapper fired from a Stop hook). The SessionStart primer warns every session when `brain.json` goes stale — a stale node is worse than no node.
+Or `./start-c2b.sh` (`./start-c2b.ps1` on Windows), which does the same with the PATH set up for a scheduler.
+
+**6. Keep it fresh.** Re-run the refresh after structural code changes, or schedule it — a nightly job (launchd/cron/Task Scheduler) or a debounced wrapper fired from a Stop hook. Give a scheduled job an explicit `PATH`: launchd and cron hand it almost none, which is why the scripts prepend the uv and graphify bin directories themselves. The SessionStart primer warns every session when `brain.json` goes stale — a stale node is worse than no node.
+
+**7. (Optional) the documentation gate.** `hook/c2b-session-doc.js` as a `Stop` hook blocks a file-mutating session from ending until it has written the day's log into the vault. It reads the vault path from `~/.claude/c2b/c2b-paths.json`, which the refresh writes for you (`C2B_VAULT` / `C2B_REPO` override it). Until then it stays silent rather than guessing at a vault — a hook that invents a path builds a fake vault instead of failing.
 
 ## MCP tools
 
@@ -129,7 +140,7 @@ The hardening behind these guarantees (atomic drains, replay dedup, ambiguous-pa
 
 ## Tests
 
-```powershell
+```bash
 cd frontend
 npm run test:unit    # node:test over the layout/sprite/frame/sanitizer logic
 npm run test:e2e     # vite preview + Chrome: views, a11y contract, framing, reduced motion

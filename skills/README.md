@@ -16,12 +16,12 @@ order, so every compiled mission starts from what is already known instead of re
 
 Copy both directories into your user skills folder:
 
-```powershell
-Copy-Item -Recurse skills/c2b-brain, skills/graph-mission "$env:USERPROFILE\.claude\skills\"
-```
-
 ```bash
 cp -r skills/c2b-brain skills/graph-mission ~/.claude/skills/
+```
+
+```powershell
+Copy-Item -Recurse skills/c2b-brain, skills/graph-mission "$env:USERPROFILE\.claude\skills\"
 ```
 
 `c2b-brain` activates on context (any brain mention, any session primer). `graph-mission` also

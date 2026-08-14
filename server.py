@@ -45,7 +45,7 @@ def load_brain() -> None:
             raise ValueError("brain.json has no nodes list")
     except (OSError, ValueError) as exc:
         print(f"[c2b] BRAIN NOT LOADED ({exc}) — serving an empty graph; "
-              f"run refresh.ps1 then POST /api/reload")
+              f"run the refresh script then POST /api/reload")
         brain = {"nodes": [], "links": [], "generatedAt": None}
     nodes_by_id.clear()
     abs_index.clear()

@@ -4,6 +4,7 @@ data/
 .venv/
 __pycache__/
 artifacts/
+graphify-out/
 *.log
 *.tsbuildinfo
 sources.json

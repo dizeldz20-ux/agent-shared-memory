@@ -59,8 +59,8 @@ into history on next start — no activity is ever lost.
 
 The brain is a snapshot; a stale node is worse than no node.
 
-- Code changed structurally (files added, renamed, deleted) → run `refresh.ps1`, or the
-  debounced wrapper if you installed one.
+- Code changed structurally (files added, renamed, deleted) → run `refresh.sh` (`refresh.ps1`
+  on Windows), or the debounced wrapper if you installed one.
 - The SessionStart primer flags a brain older than 3 days. With a daily refresh that means
   the automation broke — check its log before trusting anything the brain says.
 - Knowledge learned (a bug pattern, a setup detail, an architecture decision, a gotcha) →
@@ -82,7 +82,10 @@ The brain is a snapshot; a stale node is worse than no node.
   a git repo — otherwise it indexes `node_modules`.
 - **Never run the extractor on a tree with a vendored model or asset directory.** One 30k-file
   subdirectory turns a two-minute extract into an hour.
-- **Do not wrap the refresh in a PowerShell `*>>` redirect.** Extractors print progress to
+- **On macOS, always go through `uv run`.** The system interpreter is 3.9 and `mcp_server.py`
+  does not parse under it; a refresh that happens to work with the system `python3` is an
+  accident waiting for the next upstream edit.
+- **Do not wrap the refresh in a PowerShell `*>>` redirect** (Windows). Extractors print progress to
   stderr; PowerShell 5.1 wraps redirected native stderr into ErrorRecords, and with
   `$ErrorActionPreference = 'Stop'` the run dies on a *success* message. Redirect at the
   `cmd /c` level instead.
