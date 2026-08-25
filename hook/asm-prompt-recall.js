@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-// C2B UserPromptSubmit recall: matches the prompt against the brain and injects the few
-// nodes that are actually relevant — so recall happens on every prompt without anyone
+// ASM UserPromptSubmit recall for hook-capable agents: locate the few shared-memory nodes
+// that are actually relevant — so recall happens on every prompt without anyone
 // remembering to ask for it. Silent when nothing scores; reads brain.json from disk, so
 // it works with the visualization server down.
-// Deployed copy: ~/.claude/hooks/c2b-prompt-hook.js
+// Deployed copy: ~/.asm/hooks/asm-prompt-recall.js
 
 const fs = require('fs');
 // Compact index (pages + files only, no links) — this runs synchronously in front of every
@@ -11,8 +11,9 @@ const fs = require('fs');
 // fallback for a runtime deployed before merge.py started emitting the index.
 const os = require('os');
 const path = require('path');
-const INDEX = path.join(os.homedir(), '.claude', 'c2b', 'brain.index.json');
-const BRAIN = path.join(os.homedir(), '.claude', 'c2b', 'brain.json');
+const RUNTIME = process.env.ASM_HOME || path.join(os.homedir(), '.asm');
+const INDEX = path.join(RUNTIME, 'brain.index.json');
+const BRAIN = path.join(RUNTIME, 'brain.json');
 const MAX_HITS = 5;
 const MIN_SCORE = 3;
 
@@ -104,9 +105,9 @@ process.stdin.on('end', () => {
       return `- ${n.id}${tail}`;
     });
     process.stdout.write(
-`C2B recall — brain nodes matching this prompt (not yet read, just located):
+`ASM recall — shared-memory nodes matching this prompt (located, not yet read):
 ${lines.join('\n')}
-Open a vault node with mcp__c2b__brain_node / read its page; call mcp__c2b__brain_context(file) before editing code.
+Open a vault node with mcp__asm__brain_node; call mcp__asm__brain_context(file) before editing code.
 `);
   } catch { /* malformed payload or brain missing — inject nothing */ }
 });

@@ -1,10 +1,12 @@
 import type { BrainData, BrainNode } from './types';
+import { computeNeuralAtlas2D, type NeuralAtlasLayout } from './neuralAtlas2d.ts';
 
 export type AnatomicalNode2D = BrainNode & {
   __targetX: number;
   __targetY: number;
   __hemisphere: 'left' | 'right' | 'center';
   __region: string;
+  __anchorId: string;
   fx?: number;
   fy?: number;
   vx?: number;
@@ -21,7 +23,7 @@ export type AnatomicalLink2D = BrainData['links'][number] & {
   __tier: number;
 };
 
-export type AnatomicalGraph2D = { nodes: AnatomicalNode2D[]; links: AnatomicalLink2D[] };
+export type AnatomicalGraph2D = { nodes: AnatomicalNode2D[]; links: AnatomicalLink2D[]; atlas: NeuralAtlasLayout };
 
 export function hash32(value: string) {
   let hash = 2166136261;
@@ -37,63 +39,13 @@ function linkId(value: unknown) {
   return typeof value === 'object' && value && 'id' in value ? String((value as BrainNode).id) : String(value);
 }
 
-const LAYER_BANDS: Record<string, { y: number; sx: number; sy: number; regions: string[] }> = {
-  c2b: { y: 0, sx: 24, sy: 24, regions: ['bridge'] },
-  vault: { y: -150, sx: 118, sy: 40, regions: ['upper-left', 'upper-right', 'bridge-left', 'bridge-right'] },
-  api: { y: -88, sx: 135, sy: 58, regions: ['front-left', 'front-right', 'upper-left', 'upper-right'] },
-  web: { y: 42, sx: 148, sy: 66, regions: ['middle-left', 'middle-right', 'lower-left', 'lower-right'] },
-  ops: { y: 104, sx: 170, sy: 78, regions: ['rear-left', 'rear-right', 'middle-left', 'middle-right', 'lower-left', 'lower-right', 'upper-left', 'upper-right'] },
-  lab: { y: 154, sx: 125, sy: 48, regions: ['posterior-left', 'posterior-right', 'lower-left', 'lower-right'] },
-  ephemeral: { y: 192, sx: 68, sy: 26, regions: ['stem-left', 'stem-right', 'bridge'] },
-};
-
-function kindSpread(kind: string) {
-  if (kind === 'root') return 0.16;
-  if (kind === 'dir') return 0.45;
-  if (kind === 'page') return 0.78;
-  if (kind === 'ephemeral') return 0.55;
-  return 0.9;
-}
-
-function regionBase(region: string, bandY: number) {
-  const left = region.includes('left');
-  const right = region.includes('right');
-  const side = left ? -1 : right ? 1 : 0;
-  const x = region.includes('bridge') ? side * 58 : side * 168;
-  const y = bandY + (region.includes('upper') || region.includes('front') ? -22 : region.includes('lower') || region.includes('posterior') || region.includes('stem') ? 20 : 0);
-  return { x, y, hemisphere: side < 0 ? 'left' : side > 0 ? 'right' : 'center' } as const;
-}
-
-function targetFor(node: BrainNode, indexInLayer: number) {
-  const band = LAYER_BANDS[node.layer] ?? LAYER_BANDS.ephemeral;
-  const regions = band.regions;
-  const region = regions[indexInLayer % regions.length];
-  const base = regionBase(region, band.y);
-  const angle = hash01(`${node.id}:a`) * Math.PI * 2;
-  const radial = Math.sqrt(hash01(`${node.id}:r`));
-  const spread = kindSpread(node.kind);
-  let x = base.x + Math.cos(angle) * band.sx * radial * spread;
-  let y = base.y + Math.sin(angle) * band.sy * radial * spread;
-
-  if (node.kind === 'root') {
-    x = base.hemisphere === 'center' ? 0 : base.x * 0.62;
-    y = band.y;
-  }
-  if (base.hemisphere !== 'center' && Math.abs(x) < 28) x = 28 * (base.hemisphere === 'left' ? -1 : 1);
-  x = Math.max(-320, Math.min(320, x));
-  y = Math.max(-220, Math.min(220, y));
-  return { x, y, hemisphere: base.hemisphere, region };
-}
-
 const CURVATURES = [-0.24, -0.16, -0.08, 0, 0.08, 0.16, 0.24];
 const TYPE_STYLE: Record<string, number> = { contains: 0, code: 1, link: 2, xlayer: 3 };
 
 export function buildAnatomicalGraph2D(data: BrainData): AnatomicalGraph2D {
-  const layerCounts = new Map<string, number>();
+  const atlas = computeNeuralAtlas2D(data);
   const nodes = data.nodes.map((node) => {
-    const index = layerCounts.get(node.layer) ?? 0;
-    layerCounts.set(node.layer, index + 1);
-    const target = targetFor(node, index);
+    const target = atlas.positions.get(node.id)!;
     return {
       ...node,
       x: target.x,
@@ -106,6 +58,7 @@ export function buildAnatomicalGraph2D(data: BrainData): AnatomicalGraph2D {
       __targetY: target.y,
       __hemisphere: target.hemisphere,
       __region: target.region,
+      __anchorId: target.anchorId,
     } as AnatomicalNode2D;
   });
   const links = data.links.map((link) => {
@@ -125,7 +78,7 @@ export function buildAnatomicalGraph2D(data: BrainData): AnatomicalGraph2D {
       __styleKey: `${tier}:${hash32(`${source}|${target}`) % 2}`,
     } as AnatomicalLink2D;
   });
-  return { nodes, links };
+  return { nodes, links, atlas };
 }
 
 export function linkIds(link: AnatomicalLink2D | BrainData['links'][number]) {

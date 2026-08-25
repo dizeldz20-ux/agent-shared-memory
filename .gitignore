@@ -8,3 +8,21 @@ graphify-out/
 *.log
 *.tsbuildinfo
 sources.json
+.codex/graph-runs/
+design-qa.md
+.DS_Store
+
+# Local credentials and environment overrides must never enter the public repository.
+.env
+.env.*
+!.env.example
+!frontend/.env.preview
+*.pem
+*.p12
+*.pfx
+*.key
+
+# Runtime event and memory files belong under ~/.asm, never in the source tree.
+memory.jsonl
+events.jsonl
+pending.jsonl

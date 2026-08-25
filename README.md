@@ -1,150 +1,222 @@
-# C2B — Claude Second Brain
+# ASM — Agent Shared Memory
 
-One graph over everything you know: your **Obsidian knowledge vault** (the durable *why* — decisions, traps you already paid for, architecture notes) joined to the **code files of every project you map** — with live Claude Code activity flowing through it, an **offline MCP recall layer**, and a 3D brain-shaped visualization.
+ASM gives local coding agents one shared, offline memory. It combines mapped source-code graphs, an optional Obsidian knowledge layer, and append-only implementation records behind one local Model Context Protocol (MCP) server.
 
-The point is not the picture. The point is that **recall happens before code is read**: every Claude Code session starts knowing the brain exists, every prompt is matched against it, and every file edit can be preceded by one call that returns both the code neighbourhood *and* the human knowledge attached to it.
+Claude Code, Codex, Cursor, Kimi Code, Grok Build, Gemini CLI, and any other local stdio MCP host can query the same graph and write back to the same memory. The 3D interface is optional; recall and write-back continue to work when it is closed.
 
-```
-┌─────────────────────────┐        ┌──────────────────────────────┐
-│  Obsidian vault          │        │  Your code projects           │
-│  (openclaw structure)    │        │  (any language)               │
-│  okf/catalog.json        │        │  graphify extract --code-only │
-│  okf/graph.json          │        │  → data/raw/<name>/graph.json │
-└───────────┬─────────────┘        └───────────────┬──────────────┘
-            │        knowledge pages               │  symbol graphs,
-            │        + links + tags                │  collapsed to file level
-            └──────────────┬───────────────────────┘
-                           ▼
-                     merge.py  →  data/brain.json  (+ brain.index.json)
-                           │
-       ┌───────────────────┼──────────────────────────┐
-       ▼                   ▼                          ▼
- mcp_server.py       server.py :8930           Claude Code hooks
- (stdio MCP,         (FastAPI + WebSocket      SessionStart  → primer
-  reads brain.json    + React frontend:        UserPromptSubmit → recall
-  from disk —         3D brain / 2D network    PostToolUse  → live events
-  works offline)      / cortical rings)        (buffered when server down)
+## Why ASM
+
+ASM keeps three useful forms of memory together:
+
+1. **Immediate work memory** — structured records are appended to `~/.asm/memory.jsonl` as soon as an agent documents a completed change.
+2. **Durable human memory** — when an Obsidian vault is configured, the same record is appended to `wiki/main/daily/YYYY-MM-DD.md`.
+3. **Queryable context graph** — `brain.json` joins files, dependencies, skills, infrastructure, vault concepts, and recent agent work.
+
+The operating rule is simple: recall before reading or editing, inspect the current files, then record concrete outcomes after changing them. ASM is context, not a replacement for source control or verification.
+
+## Architecture
+
+```text
+configured projects ──> Graphify ──┐
+                                   ├──> merge.py ──> brain.json ──> local stdio MCP
+optional Obsidian OKF graph ───────┘                         ├────> lifecycle hooks
+                                                           └────> optional local UI
+agent memory_record calls ──> memory.jsonl + optional Obsidian daily note
 ```
 
-## What you get
+No hosted database or cloud memory service is required. The MCP server communicates over stdio and the optional UI binds to loopback by default.
 
-| Piece | What it does |
-|---|---|
-| `merge.py` | Merges vault knowledge pages + per-project code graphs into one `brain.json`. Code graphs are collapsed to file level; vault pages link to code by tags and path references (`xlayer` edges). |
-| `mcp_server.py` | Stdio MCP server with 5 tools (`brain_context`, `brain_search`, `brain_neighbors`, `brain_path`, `brain_node`). Reads `brain.json` from disk — **fully usable with nothing else running**. |
-| `hook/c2b-session-start.js` | SessionStart hook: injects a standing rule ("recall before you read") + graph stats + staleness warning into every session. |
-| `hook/c2b-prompt-hook.js` | UserPromptSubmit hook: scores every prompt against the brain index and injects up to 5 relevant nodes. Hebrew-aware stemming; a noise gate requires two independent matches. |
-| `hook/c2b-hook.js` | PostToolUse hook: streams every file Claude touches to the server; when the server is down, events buffer to `pending.jsonl` and drain on next start — no activity is lost. |
-| `server.py` | Optional visualization/activity server on `:8930` — graph API, WebSocket fanout, persisted `events.jsonl` history. |
-| `frontend/` | React + react-force-graph: anatomical 3D connectome, 2D network, and cortical-rings views. RTL, keyboard accessible, reduced-motion aware, with a sanitized demo mode. |
-| `refresh.sh` / `refresh.ps1` | Re-extract → re-merge → atomically redeploy runtime copies → hot-reload the running server. Same steps on either platform; the `.sh` also rebuilds the vault's `okf/` bundle first. |
-| `hook/c2b-session-doc.js` | Optional Stop hook: a session that **mutated files** may not end undocumented. Fires at most once per session, never blocks a read-only one, and stays silent until a vault is configured. |
-| [`skills/`](skills/) | **The protocol layer** — `c2b-brain` (when to call which tool, how to read the result, how to keep the graph true) and `graph-mission` (compile a complex request into a typed mission graph with the brain as rung 0 of recall, an evidence gate, and a run file that survives compaction). |
+## Agent support
 
-## The recall protocol
+| Agent host | Shared MCP | Shared skill | Native live activity | Installer target |
+| --- | --- | --- | --- | --- |
+| Claude Code | Yes | Yes | Yes | user-scoped MCP and `~/.claude/settings.json` hooks |
+| Codex | Yes | Yes | Yes | user-scoped MCP and `~/.codex/hooks.json` |
+| Cursor | Yes | Yes | Yes | `~/.cursor/mcp.json` and native user hooks |
+| Kimi Code | Yes | Yes | Yes | `~/.kimi-code/mcp.json` and managed TOML hooks |
+| Grok Build | Yes | Yes | Yes | native `grok mcp` registration plus `~/.grok/hooks/asm.json` for `PreToolUse`, `PostToolUse`, and `Stop` |
+| Gemini CLI | Yes | Client-dependent | Not installed automatically | `~/.gemini/settings.json` |
+| Other stdio MCP hosts | Yes | If the host supports Agent Skills | If the host can invoke JSON lifecycle hooks | portable config at `~/.asm/client-configs/mcp.json` |
 
-The brain is **rung 0** of the recall ladder — above code-graph tools and grep — because one call returns the merged picture:
+Grok, Kimi, Claude, and other names can describe either a model or an agent host. A model selected inside Cursor uses Cursor's local MCP and hook environment. A raw model API cannot launch a process on your computer; it needs an MCP-capable host or adapter.
 
-- About to touch a file? `brain_context(file_path)` → the matching node, its code neighbours, **the vault pages a human wrote about that file** (the traps, the decisions), and recent Claude access events.
-- Starting a task on a topic? `brain_search(topic)` — finds the knowledge page and the code files in one shot, across all projects.
-- Changing something shared? `brain_neighbors(node_id, depth)` — the blast radius.
-- How do two things relate? `brain_path(a, b)` — the actual chain between them.
-
-`brain_context`'s `vault_pages` field is the payload: a non-empty result means someone already paid for a lesson about this exact file. Read the page before editing.
+Grok Build's native hooks provide live file activity and the one-retry stop gate. Its `SessionStart` and `UserPromptSubmit` hooks are passive: they can observe events but cannot inject context into the active prompt. Grok therefore receives the recall protocol through the ASM MCP server instructions and the shared skill, not through lifecycle context injection.
 
 ## Requirements
 
-- **Python 3.11+** and [uv](https://docs.astral.sh/uv/). Run everything through `uv run` — it provisions its own 3.11, which matters on macOS, where the system interpreter is 3.9 and `mcp_server.py` does not parse under it.
-- **Node.js 24+** (the unit tests import TypeScript directly via type stripping)
-- **[graphifyy](https://pypi.org/project/graphifyy/)** — `uv tool install graphifyy` (local tree-sitter AST extraction, no LLM, respects `.gitignore`)
-- **[Claude Code](https://claude.com/claude-code)** — the hooks and MCP registration target its config
-- **An Obsidian vault** for the knowledge layer — the vault **is the memory layer of the brain**. It must carry an `okf/` bundle (a machine-readable catalog of your pages). The expected structure and the exact JSON contract are documented in [docs/vault-structure.md](docs/vault-structure.md). No vault? Set `"vault": null` in `sources.json` and you get a code-only brain — but the knowledge layer is the half that makes recall worth it.
-- **macOS / Linux / Windows.** The refresh and start scripts ship twice — `refresh.sh` + `start-c2b.sh` (bash) and `refresh.ps1` + `start-c2b.ps1` (PowerShell). Everything else (Python, Node, hooks) is cross-platform. Use whichever pair matches your shell; the two do the same work in the same order.
+- Python 3.11 or newer
+- [`uv`](https://docs.astral.sh/uv/)
+- Graphify: `uv tool install graphifyy`
+- Node.js 24 or newer for the complete frontend build and test workflow
+- At least one local MCP-capable coding agent
+- Optional: an Obsidian vault with the [documented OKF structure](docs/vault-structure.md)
 
 ## Quick start
 
-**1. Configure your sources.** Copy `sources.example.json` → `sources.json`, point it at your vault and projects, name your layers.
-
-**2. Extract + merge:**
-
 ```bash
+git clone https://github.com/dizeldz20-ux/agent-shared-memory.git
+cd agent-shared-memory
+
+cp sources.example.json sources.json
+# Edit sources.json: add projects and set vault to null for code-only mode.
+
 uv tool install graphifyy
-./refresh.sh         # graphify extract per source → merge.py → deploy to ~/.claude/c2b
+
+cd frontend
+npm ci
+npm run build
+cd ..
+
+chmod +x refresh.sh start-asm.sh install-agent-integrations.sh
+./install-agent-integrations.sh
 ```
 
-```powershell
-uv tool install graphifyy
-./refresh.ps1        # same, on Windows
-```
+The installer:
 
-Projects without a git repo need a `.graphifyignore` (like this repo's) so `node_modules`/build output stay out of the graph.
+- rebuilds the graph and deploys the runtime to `~/.asm`;
+- installs one portable `agent-shared-memory` skill under `~/.agents/skills` for compatible agents and retains only Claude Code's client-specific compatibility copy;
+- registers the same `asm` stdio MCP command with installed native CLIs;
+- safely merges MCP entries for Gemini CLI, Cursor, current Kimi Code, and legacy Kimi CLI, with native lifecycle hooks for Cursor and current Kimi Code;
+- configures Grok Build's native global activity and stop hooks without claiming unsupported session or prompt context injection;
+- writes a portable MCP configuration to `~/.asm/client-configs/mcp.json`;
+- preserves unrelated settings and refuses to overwrite malformed JSON.
 
-**3. Register the MCP server** (user scope, so it works in every project):
+Restart open agent sessions after installation. Review the local hook command once in clients that expose a hook-trust screen.
 
-```
-claude mcp add --scope user c2b -- uv run --directory <home>/.claude/c2b python mcp_server.py
-```
+### Configure mapped sources
 
-**4. Wire the hooks** into `~/.claude/settings.json`:
+`sources.json` is deliberately ignored by Git because it contains machine-specific paths. Add explicit sources, auto-discover sibling project directories, or combine both:
 
-```jsonc
+```json
 {
-  "hooks": {
-    "SessionStart": [{ "hooks": [{ "type": "command", "command": "node \"<home>/.claude/hooks/c2b-session-start.js\"" }] }],
-    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "node \"<home>/.claude/hooks/c2b-prompt-hook.js\"" }] }],
-    "PostToolUse": [{ "hooks": [{ "type": "command", "command": "node \"<home>/.claude/hooks/c2b-hook.js\"", "async": true }] }],
-    "Stop": [{ "hooks": [{ "type": "command", "command": "node \"<home>/.claude/hooks/c2b-session-doc.js\"" }] }]
-  },
-  "permissions": { "allow": ["mcp__c2b__*"] }
+  "vault": null,
+  "layers": { "agents": "Projects", "asm": "ASM" },
+  "sources": [
+    { "layer": "asm", "raw": "asm-self", "base": ".", "prefix": "" }
+  ],
+  "discoverSources": [
+    {
+      "root": "../projects",
+      "defaultLayer": "agents",
+      "exclude": ["archive"]
+    }
+  ]
 }
 ```
 
-The `mcp__c2b__*` allow rule matters: without it every brain call prompts for permission, which silently kills adoption.
+Discovery is deterministic, explicit entries win, and one missing source does not prevent the remaining sources from being merged.
 
-**5. (Optional) run the visualization:**
+## Shared agent protocol
 
-```bash
-cd frontend && npm ci && npm run build && cd ..
-uv run uvicorn server:app --port 8930    # serves the built UI + live activity
-```
+Every integrated agent receives the same contract through the shared skill, server instructions, or both:
 
-Or `./start-c2b.sh` (`./start-c2b.ps1` on Windows), which does the same with the PATH set up for a scheduler.
+1. Call `brain_search` before planning work in a mapped domain.
+2. Call `brain_context` before the first read or edit of a mapped target file.
+3. Use `brain_neighbors` when a change may affect several components.
+4. Inspect and verify the current code normally.
+5. After changing files, call `memory_record` with the result, affected files, decisions, verification, and open threads.
+6. Never store credentials, private keys, tokens, raw transcripts, or secret-bearing tool output.
 
-**6. Keep it fresh.** Re-run the refresh after structural code changes, or schedule it — a nightly job (launchd/cron/Task Scheduler) or a debounced wrapper fired from a Stop hook. Give a scheduled job an explicit `PATH`: launchd and cron hand it almost none, which is why the scripts prepend the uv and graphify bin directories themselves. The SessionStart primer warns every session when `brain.json` goes stale — a stale node is worse than no node.
-
-**7. (Optional) the documentation gate.** `hook/c2b-session-doc.js` as a `Stop` hook blocks a file-mutating session from ending until it has written the day's log into the vault. It reads the vault path from `~/.claude/c2b/c2b-paths.json`, which the refresh writes for you (`C2B_VAULT` / `C2B_REPO` override it). Until then it stays silent rather than guessing at a vault — a hook that invents a path builds a fake vault instead of failing.
+Clients with an installed `Stop` hook also get a one-retry memory gate: a session with a recognized editor, delete, or conservative file-mutating shell operation is prompted once to write its handoff before stopping. Read-only tools and recognized read-only shell commands are not blocked, and a missing MCP server cannot create an infinite loop. This is a workflow guardrail, not a complete operating-system audit. Passive lifecycle events are not treated as context injection.
 
 ## MCP tools
 
-| Tool | Input | Returns |
-|---|---|---|
-| `brain_context` | `file_path` | node + code neighbours + linked vault pages + recent access. **Call before touching a file.** |
-| `brain_search` | `query` | up to 20 nodes matching name/path/tag/description |
-| `brain_neighbors` | `node_id`, `depth` | BFS neighbourhood (≤50), including cross-layer edges |
-| `brain_path` | `from_id`, `to_id` | shortest path between two nodes |
-| `brain_node` | `node_id` | full node record + degree |
+| Tool | Purpose |
+| --- | --- |
+| `brain_search(query)` | Search graph nodes and immediate shared memories. |
+| `brain_node(node_id)` | Inspect one graph node or `memory:<id>` record. |
+| `brain_context(path)` | Get dependencies, related vault pages, and recent memory for a file. |
+| `brain_neighbors(node_id, depth)` | Traverse a bounded blast-radius neighborhood. |
+| `brain_path(from_id, to_id)` | Find the shortest relationship path between two nodes. |
+| `memory_recent(limit, query)` | Read recent cross-agent implementation records. |
+| `memory_record(...)` | Append a structured handoff to local memory and, when configured, the vault. |
 
-Node ids are namespaced: `vault:<page-id>` for knowledge, `<layer>:<path>` for code.
+For a client not handled by the installer, copy the `asm` entry from `~/.asm/client-configs/mcp.json`. The portable shape is:
 
-## Offline by design
+```json
+{
+  "mcpServers": {
+    "asm": {
+      "command": "/absolute/path/to/uv",
+      "args": [
+        "run",
+        "--directory",
+        "/absolute/path/to/.asm",
+        "python",
+        "mcp_server.py"
+      ]
+    }
+  }
+}
+```
 
-- The MCP reads `brain.json` from disk at startup; the `:8930` server only enriches `recent_access`, with a fallback to the persisted `events.jsonl`.
-- The PostToolUse hook buffers events to `pending.jsonl` (2 MB cap, newest-half kept on overflow) whenever the server is down; the server drains the buffer on start, deduplicating replays.
-- A corrupt `brain.json` never blocks the activity pipeline: the server boots with an empty graph and a loud message, because recording activity is the part that cannot be recovered later.
-
-The hardening behind these guarantees (atomic drains, replay dedup, ambiguous-path refusal, and more) is documented in [docs/implementation-notes.md](docs/implementation-notes.md).
-
-## Demo mode
-
-`npm run demo:data` regenerates `frontend/public/demo/` from your real `data/brain.json` through a sanitizer that strips every identity: node ids become `n0…n`, labels become generic, paths and descriptions are dropped — a unit test proves no private string survives. `npm run build:preview` + `vite preview` then serves the full visualization with zero API calls, safe to show anyone. This repo ships with a pre-built demo dataset (~1.6k nodes).
-
-## Tests
+## Refresh the brain
 
 ```bash
-cd frontend
-npm run test:unit    # node:test over the layout/sprite/frame/sanitizer logic
-npm run test:e2e     # vite preview + Chrome: views, a11y contract, framing, reduced motion
+./refresh.sh
 ```
+
+The refresh rebuilds the optional vault OKF graph, extracts each code source independently, merges the graph, atomically deploys runtime files, and hot-reloads the UI only if it is already running. It does not start the UI.
+
+PowerShell users can run `./refresh.ps1`. The POSIX integration installer currently provides the complete automatic multi-agent setup; Windows users can copy the portable MCP entry into their client configuration.
+
+## Optional live UI
+
+```bash
+./start-asm.sh
+```
+
+Open `http://127.0.0.1:8930`. Connectome provides the interactive 3D neural view; Map and Cortex are 2D projections of the same graph and live routes. File-access activity is buffered locally while the UI is closed and replayed when it starts again.
+
+The server expects a production frontend in `frontend/dist`. Build it with `npm run build`. To refresh the tracked, sanitized public demo separately, run `npm run demo:data`; the normal brain refresh does not rewrite demo assets.
+
+## Runtime layout
+
+```text
+~/.asm/
+├── brain.json
+├── brain.index.json
+├── memory.jsonl
+├── events.jsonl
+├── pending.jsonl
+├── asm-paths.json
+├── mcp_server.py
+├── client-configs/
+│   └── mcp.json
+└── hooks/
+    ├── asm-session-start.js
+    ├── asm-prompt-recall.js
+    ├── asm-activity-hook.js
+    └── asm-memory-gate.js
+```
+
+## Privacy and security
+
+- Keep `sources.json`, generated runtime data, credentials, and local event logs out of Git.
+- `brain.json` contains graph metadata and local file paths. Obsidian note bodies are not copied into it, but the graph still belongs on the local machine unless deliberately sanitized.
+- Live activity records agent name, tool name, phase, and file paths. It does not send prompts, source contents, tool inputs, or tool output to the UI event stream.
+- The optional Codex rollout fallback derives tool names and paths without publishing prompt text or command output. Disable it with `ASM_CODEX_ROLLOUT_FALLBACK=0`.
+- Keep the UI bound to `127.0.0.1`; do not expose the local runtime through a public tunnel without adding authentication and reviewing the data boundary.
+- Treat all text passed to `memory_record` as durable. Review it before recording and never include secrets.
+
+## Migration from C2B
+
+During one-time migration, ASM imports recoverable JSONL files from `~/.claude/c2b`, removes the old user-scoped `c2b` MCP registration and permission, and leaves the legacy directory untouched as a rollback/audit source. Stable historical vault IDs are not renamed because doing so would break existing links.
+
+## Development checks
+
+```bash
+uv run python -m unittest discover -s tests
+bash -n refresh.sh install-agent-integrations.sh start-asm.sh
+
+cd frontend
+npm ci
+npm run test:unit
+npm run build:preview
+npm run test:e2e
+```
+
+See [implementation notes](docs/implementation-notes.md) for graph/runtime invariants and [vault structure](docs/vault-structure.md) for the optional Obsidian contract.
 
 ## License
 

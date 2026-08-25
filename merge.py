@@ -11,6 +11,8 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
+from source_manifest import expanded_sources
+
 ROOT = Path(__file__).resolve().parent
 CONFIG = json.loads((ROOT / "sources.json").read_text(encoding="utf-8"))
 
@@ -20,7 +22,7 @@ XLAYER_TAGS = {layer: set(tags) for layer, tags in CONFIG.get("xlayerTags", {}).
 # source: {"layer": ..., "raw": <dir under data/raw>, "base": <project path>, "prefix": ""}
 CODE_SOURCES = [
     (s["layer"], s["raw"], (ROOT / s["base"]).resolve(), s.get("prefix", ""))
-    for s in CONFIG["sources"]
+    for s in expanded_sources(ROOT / "sources.json")
 ]
 
 
@@ -47,9 +49,26 @@ def main() -> None:
         add_node(f"{layer}:__root__", label=LAYER_LABELS[layer], layer=layer,
                  kind="root", path="", abs="")
 
+    extracted_sources = 0
+    skipped_sources: list[str] = []
     for layer, raw, base, prefix in CODE_SOURCES:
+        project_id = f"{layer}:project:{raw}"
+        project_path = prefix.rstrip("/") or raw
+        add_node(project_id, label=base.name, layer=layer, kind="dir",
+                 path=project_path, abs=norm(base))
+        links.append({"source": f"{layer}:__root__", "target": project_id, "type": "contains"})
         raw_path = ROOT / "data/raw" / raw / "graphify-out/graph.json"
-        g = json.loads(raw_path.read_text(encoding="utf-8"))
+        if not raw_path.exists():
+            skipped_sources.append(raw)
+            print(f"source {raw}: no graphify output — project root retained without AST nodes")
+            continue
+        try:
+            g = json.loads(raw_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            skipped_sources.append(raw)
+            print(f"source {raw}: invalid graphify output ({exc}) — project root retained")
+            continue
+        extracted_sources += 1
         sym2file: dict[str, str] = {}
         for n in g["nodes"]:
             sf = n.get("source_file") or ""
@@ -71,9 +90,9 @@ def main() -> None:
                 did = f"{layer}:dir:{dkey}"
                 add_node(did, label=dkey, layer=layer, kind="dir", path=dkey, abs="")
                 links.append({"source": did, "target": fid, "type": "contains"})
-                links.append({"source": f"{layer}:__root__", "target": did, "type": "contains"})
+                links.append({"source": project_id, "target": did, "type": "contains"})
             else:
-                links.append({"source": f"{layer}:__root__", "target": fid, "type": "contains"})
+                links.append({"source": project_id, "target": fid, "type": "contains"})
 
         # aggregate symbol links to file->file edges
         agg: Counter[tuple[str, str]] = Counter()
@@ -98,16 +117,21 @@ def main() -> None:
     # ---- vault layer (optional: skipped when no vault is configured) ----
     xlayer_count = 0
     if VAULT and (VAULT / "okf/catalog.json").exists():
+        add_node("vault:__root__", label="Obsidian Vault", layer="vault", kind="root", path="", abs=norm(VAULT))
         catalog = json.loads((VAULT / "okf/catalog.json").read_text(encoding="utf-8"))
         okf_graph = json.loads((VAULT / "okf/graph.json").read_text(encoding="utf-8"))
 
+        catalog_paths: set[str] = set()
+
         for c in catalog["concepts"]:
+            catalog_paths.add(norm(c["path"]))
             vid = f"vault:{c['id']}"
             add_node(vid, label=c.get("title") or c["id"], layer="vault", kind="page",
                      path=c["path"], abs=norm(VAULT / c["path"]),
                      meta={"description": c.get("description", ""),
                            "tags": c.get("tags", []),
                            "pageType": c.get("pageType", "")})
+            links.append({"source": "vault:__root__", "target": vid, "type": "contains"})
             tags = {t.lower() for t in c.get("tags", [])}
             for layer, layer_tags in XLAYER_TAGS.items():
                 if tags & layer_tags:
@@ -127,6 +151,21 @@ def main() -> None:
             s, t = f"vault:{e['from']}", f"vault:{e['to']}"
             if s in vault_ids and t in vault_ids:
                 links.append({"source": s, "target": t, "type": "link"})
+
+        # OKF is the semantic index, but the brain must still account for notes that are
+        # intentionally outside it (drafts, AGENTS guidance, historical material). Only
+        # path metadata is indexed here; note bodies never enter brain.json.
+        ignored_parts = {".git", ".obsidian", ".trash", "node_modules"}
+        for note in sorted(VAULT.rglob("*.md")):
+            rel = norm(note.relative_to(VAULT))
+            if any(part in ignored_parts for part in note.relative_to(VAULT).parts):
+                continue
+            if rel in catalog_paths or rel.startswith("okf/index/") or rel == "okf/index.md":
+                continue
+            nid = f"vault:file:{rel}"
+            add_node(nid, label=note.name, layer="vault", kind="page", path=rel,
+                     abs=norm(note), meta={"description": "", "tags": [], "pageType": "unindexed"})
+            links.append({"source": "vault:__root__", "target": nid, "type": "contains"})
     else:
         print("no vault configured (or okf/catalog.json missing) — building a code-only brain")
 
@@ -136,6 +175,11 @@ def main() -> None:
     out = {
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "counts": dict(Counter(n["kind"] for n in nodes.values())),
+        "sourceCoverage": {
+            "configured": len(CODE_SOURCES),
+            "extracted": extracted_sources,
+            "skipped": skipped_sources,
+        },
         "nodes": list(nodes.values()),
         "links": links,
     }

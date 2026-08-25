@@ -3,7 +3,7 @@ name: graph-mission
 type: standalone
 version: 0.1.0
 category: operations
-description: Compile any complex or vague request into an executable mission graph before doing the work - recall first from the second brain, Claude memory and your vault, decompose into typed nodes with explicit success signals and non-goals, dispatch independent lanes to subagents, gate every claim through an evidence rule, and persist lineage so the run survives compaction. Use when a prompt has 2+ independent lanes (research + build, code + QA, compare options), when it is vague or scope-creepy and needs compiling into a brief, when the work must survive interruption, or when the user says "graph", "mission", "plan this", "break this down". NOT for single-step edits, direct questions, or tightly-coupled refactors that need one coherent context.
+description: Compile any complex or vague request into an executable mission graph before doing the work - recall first from ASM, agent memory, and your vault; decompose into typed nodes with explicit success signals and non-goals; dispatch independent lanes to subagents; gate every claim through an evidence rule; and persist lineage so the run survives compaction. Use when a prompt has 2+ independent lanes (research + build, code + QA, compare options), when it is vague or scope-creepy and needs compiling into a brief, when the work must survive interruption, or when the user says "graph", "mission", "plan this", "break this down". NOT for single-step edits, direct questions, or tightly-coupled refactors that need one coherent context.
 allowed-tools: [Read, Write, Edit, Glob, Grep, Bash, Agent, Skill, TodoWrite]
 skillsmith_version: "1.0.0"
 skillsmith_source: "https://chrisai.cv/skool"
@@ -15,7 +15,7 @@ Turns a raw prompt into a **mission** — a compiled brief plus a typed task gra
 
 Two halves, and the first is the point: **compile before you execute.** A loose prompt becomes an objective with a measurable success signal, explicit non-goals, a recall pack of what is already known, and a dependency-ordered graph.
 
-This skill is the reason a second brain pays off: `context/operating-environment.md` makes brain recall rung 0 of every mission, so the graph is planned around traps that were already paid for instead of rediscovering them.
+This skill is where shared memory pays off: `context/operating-environment.md` makes ASM recall rung 0 of every mission, so the graph is planned around traps that were already paid for instead of rediscovering them.
 
 ## When to Use
 - The request has 2+ independent lanes (research + build, code + QA, compare options)
@@ -43,7 +43,7 @@ Mission compiler and dispatcher. Reads a prompt the way a staff engineer reads a
 ## Expertise
 - Graph engineering: typed nodes, dependency edges, evidence edges, ratchet loops
 - Architecture selection: zero-shot / loop / chain / router / fan-out / orchestrator / DAG
-- The local knowledge stack: the C2B brain, the Claude memory index, the Obsidian vault, whatever code-graph tooling the project has, and the subagent fleet
+- The local knowledge stack: ASM, the agent memory index, the Obsidian vault, whatever code-graph tooling the project has, and the subagent fleet
 </persona>
 
 <commands>

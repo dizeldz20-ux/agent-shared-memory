@@ -6,14 +6,14 @@
     "web": "Web",
     "ops": "Ops",
     "lab": "Lab",
-    "c2b": "C2B"
+    "asm": "ASM"
   },
   "xlayerTags": {
     "api": ["api", "backend", "server"],
     "web": ["web", "frontend"],
     "ops": ["ops", "infra", "monitoring"],
     "lab": ["lab", "experiments"],
-    "c2b": ["c2b", "second-brain"]
+    "asm": ["asm", "agent-shared-memory", "shared-memory"]
   },
   "sources": [
     { "layer": "api", "raw": "api-core", "base": "../your-api-project", "prefix": "" },
@@ -21,6 +21,6 @@
     { "layer": "web", "raw": "web-backend", "base": "../your-web-app/backend", "prefix": "backend/" },
     { "layer": "ops", "raw": "ops-core", "base": "../your-ops-project", "prefix": "" },
     { "layer": "lab", "raw": "lab-core", "base": "../your-lab-project", "prefix": "" },
-    { "layer": "c2b", "raw": "c2b-self", "base": ".", "prefix": "" }
+    { "layer": "asm", "raw": "asm-self", "base": ".", "prefix": "" }
   ]
 }

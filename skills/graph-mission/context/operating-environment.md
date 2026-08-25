@@ -10,7 +10,7 @@ Never scan code to "remember" something. Recall runs in this order, cheapest fir
 
 | Rung | Source | How to reach it | Costs |
 |------|--------|-----------------|-------|
-| 0 | **C2B second brain** | `mcp__c2b__brain_search(topic)` for a mission subject, `mcp__c2b__brain_context(file)` for a file. One call returns the vault pages *and* the code neighbourhood together — it is the merged graph of both, so it usually answers rungs 3 and 4 at once. Skill: `c2b-brain` | one call |
+| 0 | **ASM shared memory** | `mcp__asm__brain_search(topic)` for a mission subject, `mcp__asm__brain_context(file)` for a file. One call returns the vault pages *and* the code neighbourhood together — it is the merged graph of both, so it usually answers rungs 3 and 4 at once. Skill: `agent-shared-memory` | one call |
 | 1 | `MEMORY.md` index | Already in context every session — consult it, do not re-read the file | free |
 | 2 | A memory topic file | The file the index line points at; the detail lives there, not in the index | one Read |
 | 3 | The vault (source of truth) | Start from the generated index (`okf/index.md`) or the catalog, not from a directory listing | one or two Reads |

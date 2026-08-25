@@ -1,6 +1,6 @@
-# The vault — C2B's memory layer
+# The vault — ASM's memory layer
 
-C2B's knowledge layer is an **Obsidian vault**. The vault is not an attachment to the brain — it *is* the brain's memory: every page becomes a graph node, page `related` links become edges, and page tags/path references become the cross-layer edges that tie knowledge to code. Obsidian is required for the humans (editing, backlinks, graph view); C2B itself only reads two generated JSON files.
+ASM's knowledge layer is an **Obsidian vault**. The vault is not an attachment to the brain — it *is* the brain's memory: every page becomes a graph node, page `related` links become edges, and page tags/path references become the cross-layer edges that tie knowledge to code. Obsidian is required for the humans (editing, backlinks, graph view); ASM itself only reads two generated JSON files.
 
 ## Vault layout (openclaw-wiki structure)
 
@@ -17,13 +17,13 @@ YourVault/
 │   └── projects/<name>/     # per-project knowledge (README + docs/)
 └── okf/                     # generated, machine-readable bundle
     ├── index.md             # progressive-disclosure index (entry point for agents)
-    ├── catalog.json         # ← C2B reads this
+    ├── catalog.json         # ← ASM reads this
     └── graph.json           # ← and this
 ```
 
 ## Page frontmatter
 
-Every page carries frontmatter; the OKF fields are the ones that matter to C2B:
+Every page carries frontmatter; the OKF fields are the ones that matter to ASM:
 
 ```yaml
 ---
@@ -41,11 +41,11 @@ contradictions: [superseded-id]      # when a page revises an older one — neve
 ```
 
 The `description` field is the single highest-value line: it is what `brain_search` and the
-prompt-recall hook match against, and what gets injected into a Claude session as context.
+prompt-recall hook match against, and what gets injected into an agent session as context.
 
-## The okf/ bundle — the contract C2B consumes
+## The okf/ bundle — the contract ASM consumes
 
-C2B does not parse markdown. It reads two JSON files that any generator can produce
+ASM does not parse markdown. It reads two JSON files that any generator can produce
 (a ~30-line frontmatter scraper over `wiki/main/**` is enough):
 
 **`okf/catalog.json`**
@@ -73,7 +73,7 @@ C2B does not parse markdown. It reads two JSON files that any generator can prod
 { "edges": [ { "from": "api-deploy-gotchas", "to": "api-overview" } ] }
 ```
 
-How C2B uses them (see `merge.py`):
+How ASM uses them (see `merge.py`):
 
 - Every catalog concept → a `vault:<id>` node carrying `description`, `tags`, `pageType`.
 - A tag that appears in a layer's `xlayerTags` (in `sources.json`) → `xlayer` edge from the page to that code layer's root.

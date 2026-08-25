@@ -1,4 +1,4 @@
-export type Layer = 'vault' | 'api' | 'web' | 'ops' | 'lab' | 'c2b' | 'ephemeral';
+export type Layer = string;
 
 export interface BrainNode {
   id: string;
@@ -34,25 +34,47 @@ export interface LiveEvent {
   matched: boolean;
   layer: string;
   label: string;
+  agent?: string;
+  presence?: boolean;
+  source?: string;
+  phase?: 'start' | 'finish' | string;
+  operation_id?: string;
+  /** True when the agent adapter resolved this as a concrete file access. */
+  file_access?: boolean;
 }
 
-// DS hues on the dark canvas
+export interface LiveActivitySource {
+  nodeId: string;
+  agent: string;
+  until: number;
+}
+
+// Layer identity is reserved for filters and details. The primary 3D brain uses a
+// restrained neural palette so the structure reads as one shared system.
 export const LAYER_COLORS: Record<string, string> = {
-  vault: '#33B1FF',
-  api: '#51D5A5',
-  web: '#F1C21B',
-  ops: '#F5ACA3',
-  lab: '#C9EDFF',
-  c2b: '#C94236',
-  ephemeral: '#E1E6EC',
+  vault: '#8fd8d4',
+  asm: '#e8f0ed',
+  agents: '#9db8c8',
+  skills: '#b1a7c8',
+  acp: '#c6ad83',
+  ops: '#b88d88',
+  api: '#8fb8ae',
+  web: '#a7b39a',
+  lab: '#9aabb4',
+  memory: '#d6c6a0',
+  ephemeral: '#77868a',
 };
 
 export const LAYER_NAMES: Record<string, string> = {
-  vault: 'כספת הידע',
+  vault: 'Obsidian · ידע',
+  asm: 'ASM · ליבה',
+  agents: 'Agents',
+  skills: 'Skills',
+  acp: 'Agent Control Plane',
   api: 'API',
   web: 'Web',
   ops: 'Ops',
   lab: 'Lab',
-  c2b: 'C2B (המוח עצמו)',
+  memory: 'זיכרון מיידי',
   ephemeral: 'מחוץ למפה',
 };

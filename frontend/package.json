@@ -1,5 +1,5 @@
 {
-  "name": "c2b-frontend",
+  "name": "asm-frontend",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -9,7 +9,7 @@
     "build:preview": "tsc -b && vite build --mode preview",
     "demo:data": "node scripts/build-demo-graph.mjs",
     "test:unit": "node --test scripts/*.test.mjs",
-    "test:e2e": "node scripts/c2b-e2e.mjs",
+    "test:e2e": "node scripts/asm-e2e.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

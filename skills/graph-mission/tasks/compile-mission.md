@@ -52,7 +52,7 @@ Recall runs **before** decomposition, not after. A graph planned without it will
 
 Walk the recall order in `context/operating-environment.md`, stopping as soon as the question is answered:
 
-1. Ask the second brain first: `mcp__c2b__brain_search(topic)` for the mission subject, `mcp__c2b__brain_context(file)` for any file the mission will touch. One call returns both the knowledge pages and the code neighbourhood — it usually answers steps 3 and 4 at once.
+1. Ask ASM first: `mcp__asm__brain_search(topic)` for the mission subject, `mcp__asm__brain_context(file)` for any file the mission will touch. One call returns both the knowledge pages and the code neighbourhood — it usually answers steps 3 and 4 at once.
 2. Scan the memory index already in context for lines touching this mission's subject, and read the topic files those lines point at.
 3. Check the vault for the project page before scanning code.
 4. For a code question in a project with a code-graph index, query it — it returns the symbols' source plus the call paths in one round trip.

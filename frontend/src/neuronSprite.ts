@@ -11,7 +11,7 @@
 export type NeuronState = 'idle' | 'focus' | 'active' | 'picked';
 
 /** Sprite half-extent in node radii; the glow needs room beyond the body. */
-export const NEURON_GLOW = 2.9;
+export const NEURON_GLOW = 2.25;
 /** Radius the sprite is baked at. Blitting rescales it to the real node radius. */
 export const NEURON_BAKE_RADIUS = 24;
 
@@ -60,7 +60,7 @@ export interface NeuronRamp {
 }
 
 export function neuronRamp(color: string, state: NeuronState): NeuronRamp {
-  const glowAlpha = state === 'picked' ? 0.52 : state === 'active' ? 0.44 : state === 'focus' ? 0.3 : 0.22;
+  const glowAlpha = state === 'picked' ? 0.34 : state === 'active' ? 0.28 : state === 'focus' ? 0.16 : 0.07;
   const highlight = state === 'picked' ? WHITE : mixColor(color, WHITE, 0.88);
   return {
     glow: [
@@ -110,19 +110,13 @@ export function paintNeuron(
   ctx.arc(c, c, r * NEURON_GLOW, 0, Math.PI * 2);
   ctx.fill();
 
+  // Idle tissue is intentionally hollow. Thousands of filled, glowing somas turn the
+  // brain into a toy-like bead cloud; a thin membrane keeps topology legible.
   ctx.globalCompositeOperation = 'source-over';
-  // Offset the inner stop so the soma reads as lit from the upper left.
-  const body = ctx.createRadialGradient(c - r * 0.32, c - r * 0.34, r * 0.04, c, c, r);
-  for (const [stop, value] of ramp.body) body.addColorStop(stop, value);
-  ctx.fillStyle = body;
-  ctx.beginPath();
-  ctx.arc(c, c, r, 0, Math.PI * 2);
-  ctx.fill();
-
   ctx.strokeStyle = ramp.rim;
-  ctx.lineWidth = Math.max(0.7, r * ramp.rimWidth);
+  ctx.lineWidth = Math.max(0.7, r * (state === 'idle' ? 0.075 : ramp.rimWidth));
   ctx.beginPath();
-  ctx.arc(c, c, r * 0.94, 0, Math.PI * 2);
+  ctx.arc(c, c, r * 0.88, 0, Math.PI * 2);
   ctx.stroke();
 
   if (ramp.contour) {
@@ -133,15 +127,15 @@ export function paintNeuron(
     ctx.stroke();
   }
 
-  if (core) {
+  if (core || state === 'active' || state === 'picked') {
     ctx.globalCompositeOperation = 'lighter';
-    const spark = ctx.createRadialGradient(c, c, 0, c, c, r * 0.52);
-    spark.addColorStop(0, rgba(WHITE, 0.95));
-    spark.addColorStop(0.5, rgba(WHITE, 0.28));
+    const spark = ctx.createRadialGradient(c, c, 0, c, c, r * 0.38);
+    spark.addColorStop(0, rgba(WHITE, state === 'idle' ? 0.46 : 0.9));
+    spark.addColorStop(0.5, rgba(WHITE, state === 'idle' ? 0.12 : 0.24));
     spark.addColorStop(1, rgba(WHITE, 0));
     ctx.fillStyle = spark;
     ctx.beginPath();
-    ctx.arc(c, c, r * 0.52, 0, Math.PI * 2);
+    ctx.arc(c, c, r * 0.38, 0, Math.PI * 2);
     ctx.fill();
     ctx.globalCompositeOperation = 'source-over';
   }

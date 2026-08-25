@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-const source = await readFile(new URL('./c2b-e2e.mjs', import.meta.url), 'utf8');
+const source = await readFile(new URL('./asm-e2e.mjs', import.meta.url), 'utf8');
 
 test('preview server is isolated and cannot silently move to a foreign port', () => {
   assert.match(source, /'--strictPort'/);

@@ -1,30 +1,39 @@
 # Skills — the protocol layer
 
-The brain is a graph and five MCP tools. **These skills are what makes an agent actually use it.**
+The brain is a graph and seven MCP tools. **These skills are what makes an agent actually use it.**
 Without them you get a well-built index that nobody queries; with them, recall happens before
 code is read, on every session, without anyone remembering to ask.
 
 | Skill | What it does |
 |---|---|
-| [`c2b-brain`](c2b-brain/) | The recall protocol: which brain tool to call when, how to read `vault_pages`, how to keep the graph from going stale, and the traps that cost real time to find. |
+| [`agent-shared-memory`](agent-shared-memory/) | The recall protocol: which brain tool to call when, how to read `vault_pages`, how to keep the graph from going stale, and the traps that cost real time to find. |
 | [`graph-mission`](graph-mission/) | Compiles a complex or vague request into a typed mission graph **before** touching code — recall first (brain → memory → vault → code graph → grep), explicit non-goals, subagent dispatch, an evidence gate that rejects self-reports, and a run file that survives context compaction. |
+| [`codex/graph-mission`](codex/graph-mission/) | Codex-native port of the protocol: ASM and `memory_recent` recall, Codex planning/commentary, at most three child agents beside the primary agent, shared-filesystem write isolation, `.codex/graph-runs/` lineage, and proportional direct verification. |
 
 The two are designed together: `graph-mission` names the brain as **rung 0** of its recall
 order, so every compiled mission starts from what is already known instead of rediscovering it.
 
 ## Install
 
-Copy both directories into your user skills folder:
+The refresh installer places one cross-agent copy of the shared-memory protocol under
+`~/.agents/skills` for Codex, Cursor, Kimi Code, and Grok Build, plus a Claude Code
+compatibility copy under `~/.claude/skills`. To install the skills manually:
 
 ```bash
-cp -r skills/c2b-brain skills/graph-mission ~/.claude/skills/
+mkdir -p ~/.agents/skills ~/.claude/skills
+cp -r skills/agent-shared-memory ~/.agents/skills/
+cp -r skills/agent-shared-memory ~/.claude/skills/
+cp -r skills/codex/graph-mission ~/.agents/skills/
 ```
 
 ```powershell
-Copy-Item -Recurse skills/c2b-brain, skills/graph-mission "$env:USERPROFILE\.claude\skills\"
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.agents\skills", "$env:USERPROFILE\.claude\skills" | Out-Null
+Copy-Item -Recurse skills/agent-shared-memory "$env:USERPROFILE\.agents\skills\"
+Copy-Item -Recurse skills/agent-shared-memory "$env:USERPROFILE\.claude\skills\"
+Copy-Item -Recurse skills/codex/graph-mission "$env:USERPROFILE\.agents\skills\"
 ```
 
-`c2b-brain` activates on context (any brain mention, any session primer). `graph-mission` also
+`agent-shared-memory` activates on context (any brain mention, any session primer). `graph-mission` also
 takes an explicit `/graph-mission` invocation.
 
 ## Customize before you rely on it

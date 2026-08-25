@@ -22,28 +22,32 @@ Engineering decisions and paid-for lessons, kept so the next person does not red
 
 ## Brain-shaped layout (frontend)
 
-- A custom d3 force herds nodes into an ellipsoid cortex with a longitudinal fissure; each layer gets a lobe bias, the vault forms the top band (corpus callosum), ephemeral activity sinks to the brain stem, and C2B maps itself as a compact nucleus at the core.
+- The 3D view pins real graph nodes inside a tapered cortical volume and surrounds them with a sparse deterministic cortical point field. A longitudinal fissure and bounded hub degree preserve the anatomical silhouette; ASM maps itself as a compact nucleus at the core.
 - Shape forces must DOMINATE link forces or the mass collapses to a blob: link strength 0.015–0.08, charge −14, shell spring ~1.
 - Force config must be deferred ~150ms after graphData lands (else a `reading 'tick'` crash) and wrapped in try/catch.
 - Bloom calibration for ~1.6k nodes: UnrealBloomPass at low strength + small nodes — stronger bloom or bigger nodes washes dense lobes to white.
 - 2D somas are pre-baked sprites (glow, lit body, rim light): `createRadialGradient` per node per frame blows the frame budget at ~1.6k repainting nodes.
 - Link alphas multiply the renderer's global `linkOpacity` — the number in the code is not what you see. The quietest tier once rendered at an effective ~4%: a connection nobody could follow with their eye. Tiers still rank, but start from a visible floor; the structure of the brain is the links, not the dots.
+- Live current never creates synthetic event lines. It traverses the same `contains`, `code`, `link`, and `xlayer` edges already painted in CONNECTOME/MAP/CORTEX. The 3D layer updates fixed GPU buffers; the 2D layer uses a transparent RAF canvas above the static atlas. Repainting the whole 20k-node ForceGraph at 12fps looked both choppy and expensive, while the isolated overlay remains fluid and leaves pan/zoom responsive.
+- Pointer deformation is a bounded position-based relaxation, not a global force simulation: a spatial hash admits local colliders, real graph links supply springs, weak anatomical anchors preserve the brain silhouette, and per-frame displacement caps prevent dense fields from popping. The spatial world and spring pairs are reused; dense 2D pointer frames use an adaptive one-pass budget, then rebuild the static `Path2D` topology in short post-settle slices and atomically swap it so moved axons do not leave stale duplicate lines. The 3D view updates its existing GPU buffers without replacing DragControls; sampled dendrites and synaptic tips translate with their soma instead of being left behind. Per-layout position caches survive view/live-graph changes; reset clears only the active layout and rebuilds its canonical geometry.
 
 ## Adoption layer — the brain is consulted, not just updated
 
 - SessionStart hook prints the primer + standing rule; stdout injects into session context. Verify with a fresh `claude -p` run — it should quote the rule back.
 - UserPromptSubmit hook scores the prompt against the brain index and injects up to 5 nodes. For Hebrew (agglutinative), `stem()` strips one leading particle + plural suffix — without it Hebrew prompts match nothing. Noise gate: **2 matched tokens required**, unless a token is specific (filename or 8+ chars) — one generic word landing in one description is a coincidence, and a hook that fires on coincidences gets ignored.
-- The prompt hook must stay synchronous: `async: true` would discard the stdout that carries the injection. The activity hook (PostToolUse) can and should be async.
-- **`"mcp__c2b__*"` must be in `permissions.allow`** — otherwise every brain call prompts ("permission not granted"), silently killing adoption. Only a live `claude -p` run surfaces this.
+- The prompt hook must stay synchronous: `async: true` would discard the stdout that carries the injection. Activity hooks can and should be async: `PreToolUse` emits the live start signal, while `PostToolUse` refreshes/completes it and is the only phase allowed to mark a mutation for the memory gate. Both phases carry the same `tool_use_id`, so the UI replaces start with finish instead of counting one access twice.
+- **`"mcp__asm__*"` must be in `permissions.allow`** — otherwise every brain call prompts ("permission not granted"), silently killing adoption. Only a live `claude -p` run surfaces this.
 - Testing hooks with non-ASCII input on Windows: PowerShell 5.1 mangles non-ASCII command-line text to `?`. Write the payload to a UTF-8 file and pipe it, or the test lies.
 
 ## Hardening (found by an adversarial review of the offline path)
 
 - **Drain race (destroyed events on Windows).** `read_text()` then `unlink()` left a window where a hook's append landed in an orphaned file — both sides reported success. Fix: `PENDING_PATH.replace(staged)` first — rename is atomic and appenders immediately get a fresh buffer. A `.draining` left by a crashed drain folds back in on the next start.
-- **Replay duplicates.** A hook aborting *after* the server persisted buffered a copy that the drain re-added. Drain skips events whose `(ts, session, path)` is already known. Hook timeout 1s→2s (the aborts came from parallel Node startup contention, not server latency).
+- **Replay duplicates.** A hook aborting *after* the server persisted buffered a copy that the drain re-added. Replay identity includes timestamp, agent, session, path, tool, phase, and operation id. `phase` is essential: Claude can emit Pre/Post in the same millisecond, and collapsing `finish` into `start` leaves access permanently open. The known set is advanced while scanning one staged file so duplicates inside the same buffer are also removed.
 - **Silent no-op buffer.** `appendFileSync` does not create parent directories and the catch was empty; on a fresh machine the whole fallback was lossy and reported success. `mkdirSync(recursive)` first.
 - **Import-time parses could brick startup forever.** One bad byte in the event log → server never boots → nothing drains → total silent loss. Fix: `errors="replace"`, catch `ValueError` (UnicodeDecodeError is one), and a corrupt `brain.json` serves an empty graph with a loud message instead of refusing to start — recording activity is the part that cannot be recovered later.
 - **`persist()` failure hid behind a 200.** It now returns bool and the endpoint answers 500, so the hook buffers instead of losing the event.
+- **Durability must precede visibility.** Neither live publish nor pending drain adds an event to `recent` before `persist()` succeeds. Otherwise the retry is mistaken for a duplicate and a failed append becomes permanent data loss.
+- **One suspended UI blocked every agent.** WebSocket fanout now uses a client snapshot, concurrent sends, and a bounded per-client timeout. A stalled browser is removed without delaying the hook, Codex rollout watcher, or healthy UI clients.
 - **Overflow dropped the newest events.** The 2MB cap returned early, keeping a stale backlog. Now it keeps the newest half and writes a `{"dropped": n}` marker line (drain skips markers).
 - **`find_by_path` answered ambiguous paths confidently.** A bare-suffix match returned the first hit in iteration order — another project's node, its vault pages, injected as authoritative context. Now: exact match, else require ≥2 path segments and a *unique* match, else `None` plus a note telling the caller to qualify the path.
 - **`recent_access` matched bare filenames** across projects; it matches node-id only once the node is known.
@@ -52,7 +56,7 @@ Engineering decisions and paid-for lessons, kept so the next person does not red
 
 ## Offline path
 
-- Hook POST fails → append to `~/.claude/c2b/pending.jsonl` (cap 2MB, newest-half kept).
+- Hook POST fails → append to `~/.asm/pending.jsonl` (cap 2MB, newest-half kept).
 - Server start → load recent history (tail of `events.jsonl`) → drain pending (dedup) → serve.
 - MCP `recent_access()` tries HTTP `:8930` (1s timeout), falls back to the tail of `events.jsonl`.
 - Verified end to end: server down → fresh session called `brain_context` fine → events buffered → restart drained them.
@@ -60,5 +64,5 @@ Engineering decisions and paid-for lessons, kept so the next person does not red
 ## Ports / paths
 
 - Visualization server: **8930** (optional — the brain works without it). Vite dev: 5930; e2e preview: 5941.
-- Runtime copies (3 hooks, MCP server, brain.json, events.jsonl): `~/.claude/c2b/` and `~/.claude/hooks/`. Keep the runtime dir on a plain local path — cloud-synced folders (OneDrive & co.) interfere with concurrent appends and file watching.
+- Runtime copies (4 hooks, MCP server, brain.json, events.jsonl, memory.jsonl): `~/.asm/`. Keep the runtime dir on a plain local path — cloud-synced folders (OneDrive & co.) interfere with concurrent appends and file watching.
 - Python deps pin `mcp>=1.9,<2` — SDK 2.0 removed `mcp.server.fastmcp`; the MCP dies on start with 2.x.

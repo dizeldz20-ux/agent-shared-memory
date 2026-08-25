@@ -4,7 +4,7 @@ import test from 'node:test';
 
 const root = new URL('../', import.meta.url);
 const useLiveSource = await readFile(new URL('src/useLive.ts', root), 'utf8');
-const e2eSource = await readFile(new URL('scripts/c2b-e2e.mjs', root), 'utf8');
+const e2eSource = await readFile(new URL('scripts/asm-e2e.mjs', root), 'utf8');
 
 const normalize = (text) => text.replace(/\r\n/g, '\n');
 
@@ -17,7 +17,7 @@ test('useLive declares and clears reconnect lifecycle guards', () => {
   assert.match(useLive, /if\s*\(retryTimer\)\s*clearTimeout\(retryTimer\);/);
 });
 
-test('c2b e2e owns browser and process-tree cleanup with a strict response gate', () => {
+test('ASM e2e owns browser and process-tree cleanup with a strict response gate', () => {
   assert.match(e2e, /(?:let|const)\s+browser\b/);
   assert.match(e2e, /browser\s*=\s*await\s+chromium\.launch/);
   assert.match(e2e, /finally\s*\{[\s\S]*await\s+browser\.close\(\);[\s\S]*await\s+stopServer\(server\);[\s\S]*\}/);

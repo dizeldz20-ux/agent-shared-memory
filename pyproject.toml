@@ -1,10 +1,16 @@
 [project]
-name = "c2b"
+name = "agent-shared-memory"
 version = "0.1.0"
-description = "C2B - Claude Second Brain: unified knowledge+code graph, live Claude activity, MCP query layer"
+description = "ASM - Agent Shared Memory: one offline knowledge, code, and work-memory layer for every coding agent"
+readme = "README.md"
 requires-python = ">=3.11"
+license = { file = "LICENSE" }
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.34",
     "mcp>=1.9,<2",
 ]
+
+[project.urls]
+Homepage = "https://github.com/dizeldz20-ux/agent-shared-memory"
+Repository = "https://github.com/dizeldz20-ux/agent-shared-memory.git"

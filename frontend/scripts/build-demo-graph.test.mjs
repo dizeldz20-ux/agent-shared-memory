@@ -19,10 +19,11 @@ test('sanitizeGraph preserves topology while removing private identity', () => {
   assert.equal(graph.nodes.length, 3);
   assert.equal(graph.links.length, 2);
   assert.deepEqual(graph.nodes.map((node) => node.id), ['n0', 'n1', 'n2']);
-  assert.ok(graph.nodes.every((node) => node.path === ''));
+  assert.ok(graph.nodes.every((node) => node.kind === 'root' ? node.path === '' : node.path.startsWith('demo/')));
   assert.ok(graph.nodes.every((node) => !('abs' in node) && !('meta' in node)));
   assert.ok(graph.links.every((link) => /^n\d+$/.test(link.source) && /^n\d+$/.test(link.target)));
   assert.ok(events.length > 0);
+  assert.ok(events.every((event) => event.path.startsWith('demo/')));
   const serialized = JSON.stringify({ graph, events });
   for (const forbidden of ['Customer secret', 'private/customer.md', 'C:/Users/User', 'vault:secret-note', 'api.py', 'private text', 'secret']) {
     assert.equal(serialized.includes(forbidden), false, forbidden);

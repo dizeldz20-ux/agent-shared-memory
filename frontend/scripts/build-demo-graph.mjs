@@ -7,7 +7,10 @@ const ROOT_LABELS = {
   web: 'Web',
   ops: 'Ops',
   lab: 'Lab',
-  c2b: 'C2B',
+  asm: 'ASM',
+  agents: 'Agents',
+  skills: 'Skills',
+  acp: 'ACP',
   ephemeral: 'מחוץ למפה',
 };
 
@@ -30,13 +33,17 @@ export function sanitizeGraph(input) {
   const counters = new Map();
 
   const nodes = nodesIn.map((node, index) => {
-    const key = `${node.layer}:${node.kind}`;
+    const layer = node.layer === 'c2b' ? 'asm' : node.layer;
+    const key = `${layer}:${node.kind}`;
     const count = (counters.get(key) ?? 0) + 1;
     counters.set(key, count);
     const label = node.kind === 'root'
-      ? (ROOT_LABELS[node.layer] ?? 'ליבה')
+      ? (ROOT_LABELS[layer] ?? 'ליבה')
       : `${KIND_LABELS[node.kind] ?? 'צומת'} ${String(count).padStart(3, '0')}`;
-    return { id: `n${index}`, label, layer: node.layer, kind: node.kind, path: '' };
+    const demoPath = node.kind === 'file' || node.kind === 'page'
+      ? `demo/${layer}/${node.kind}-${String(count).padStart(3, '0')}.${node.kind === 'page' ? 'md' : 'ts'}`
+      : '';
+    return { id: `n${index}`, label, layer, kind: node.kind, path: demoPath };
   });
 
   const links = linksIn.flatMap((link) => {
@@ -46,13 +53,14 @@ export function sanitizeGraph(input) {
     return [{ source, target, type: link.type, ...(Number.isFinite(link.weight) ? { weight: link.weight } : {}) }];
   });
 
-  const demoNodes = nodes.filter((node) => node.kind !== 'root').slice(0, 18);
+  const demoNodes = nodes.filter((node) => node.kind === 'file' || node.kind === 'page').slice(0, 18);
   const events = demoNodes.map((node, index) => ({
     ts: index,
     tool: index % 3 === 0 ? 'Read' : index % 3 === 1 ? 'Edit' : 'Grep',
     cwd: 'demo',
     session: 'demo',
-    path: '',
+    agent: index % 2 === 0 ? 'Codex' : 'Claude Code',
+    path: node.path,
     node_id: node.id,
     matched: true,
     layer: node.layer,

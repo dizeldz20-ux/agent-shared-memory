@@ -1,5 +1,6 @@
 import type { LiveEvent } from './types';
 import { LAYER_COLORS } from './types';
+import { liveEventKey, liveFilePath } from './liveActivity';
 
 interface Props {
   events: LiveEvent[];
@@ -14,7 +15,7 @@ const fmtTime = (ts: number) =>
   new Date(ts * 1000).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
 export function Feed({ events, sessions, sessionFilter, onSessionFilter, onJump }: Props) {
-  const shown = events.filter((e) => !sessionFilter || e.cwd === sessionFilter).slice(0, 80);
+  const shown = events.filter((e) => !sessionFilter || e.cwd === sessionFilter);
   return (
     <div className="feed">
       <div className="feed-head">
@@ -30,12 +31,19 @@ export function Feed({ events, sessions, sessionFilter, onSessionFilter, onJump 
         </label>
       </div>
       <div className="feed-list">
-        {shown.length === 0 && <div className="feed-empty">ממתין לפעילות של קלוד…</div>}
-        {shown.map((e, i) => (
-          <button type="button" key={`${e.ts}-${i}`} className="feed-row" onClick={() => onJump(e.node_id)}>
+        {shown.length === 0 && <div className="feed-empty">ממתין לאות מאחד הסוכנים…</div>}
+        {shown.map((e) => (
+          <button
+            type="button"
+            key={liveEventKey(e)}
+            className="feed-row"
+            onClick={() => !e.presence && onJump(e.node_id)}
+            disabled={Boolean(e.presence)}
+          >
             <span className="layer-swatch" style={{ backgroundColor: LAYER_COLORS[e.layer] ?? '#9EA5AD' }} aria-hidden="true" />
+            <span className="feed-agent">{e.agent || 'AGENT'}</span>
             <span className="feed-tool">{e.tool}</span>
-            <span className="feed-label" title={e.path}>{e.label}</span>
+            <span className="feed-label" title={e.path}>{liveFilePath(e)}</span>
             <span className="feed-time">{fmtTime(e.ts)}</span>
           </button>
         ))}

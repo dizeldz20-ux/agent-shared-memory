@@ -6,9 +6,10 @@ import {
   clearCorticalRingPins,
   computeCorticalRings,
   digestRingLayout,
+  ringPoint,
 } from '../src/corticalRings.ts';
 
-const counts = { c2b: 22, vault: 226, api: 241, web: 149, ops: 973, lab: 35 };
+const counts = { asm: 22, vault: 226, api: 241, web: 149, ops: 973, lab: 35 };
 
 function fixture() {
   const nodes = [];
@@ -37,18 +38,40 @@ test('cortical rings are deterministic and independent of source order', () => {
   assert.equal(JSON.stringify(input), before);
 });
 
-test('rings form organic elliptical bands with gaps and a restrained core', () => {
+test('cortex forms open lobe folds with full, collision-light coverage', () => {
   const layout = computeCorticalRings(buildAnatomicalGraph2D(fixture()).nodes);
-  const ratios = layout.bands.map((band) => band.ry / band.rx);
-  assert.ok(Math.min(...ratios) >= 0.58, `ellipse ratio minimum ${Math.min(...ratios)}`);
-  assert.ok(Math.max(...ratios) <= 0.82, `ellipse ratio maximum ${Math.max(...ratios)}`);
-  assert.ok(new Set(ratios.map((ratio) => ratio.toFixed(3))).size >= 3, 'rings need multiple ellipse ratios');
-  assert.ok(layout.bands.filter((band) => band.layer === 'ops').length >= 4, 'heavy Ops layer needs sub-bands');
-  assert.ok(layout.arcGapCountMin >= 4 && layout.arcGapCountMax <= 6, `gap range ${layout.arcGapCountMin}..${layout.arcGapCountMax}`);
-  assert.ok(layout.maxOffBandDistance < 5, `off-band distance ${layout.maxOffBandDistance}`);
-  assert.ok(layout.radialJitterMax < 5, `radial jitter ${layout.radialJitterMax}`);
-  assert.equal(layout.radialJitterMax, layout.maxOffBandDistance, 'reported radial jitter must be measured, not a limit constant');
-  const core = [...layout.positions.values()].filter((position) => position.layer === 'c2b');
+  const aspect = layout.maxX / layout.maxY;
+  const populatedLayers = new Set(Object.keys(counts).filter((layer) => layer !== 'asm'));
+  assert.ok(aspect >= 1.8 && aspect <= 3.4, `cortical sheet aspect ${aspect}`);
+  assert.ok(layout.bands.length >= populatedLayers.size, `fold coverage ${layout.bands.length}/${populatedLayers.size}`);
+  assert.ok([...populatedLayers].every((layer) => layout.bands.some((band) => band.layer === layer)), 'every populated lobe needs a fold');
+  assert.deepEqual(new Set(layout.bands.map((band) => band.side)), new Set([-1, 1]), 'the complete cortex must use both hemispheres');
+  assert.ok(layout.bands.every((band) => Math.sign(band.cx) === band.side), 'every band belongs to one hemisphere');
+  assert.ok(layout.bands.every((band) => band.subBand === 0), 'open cortex should not recreate concentric sub-rings');
+  assert.equal(layout.arcGapCountMin, 2);
+  assert.equal(layout.arcGapCountMax, 2);
+  assert.ok(layout.maxOffBandDistance > 10, 'the sheet must use area around each fold, not collapse onto a line');
+  assert.ok(layout.maxOffBandDistance <= Math.max(...layout.bands.map((band) => band.ry)) + 1);
+  assert.equal(layout.radialJitterMax, layout.maxOffBandDistance, 'reported fold depth must be measured');
+
+  for (const band of layout.bands) {
+    assert.ok(band.arcs.every((arc) => arc.start >= -1 && arc.end <= 1 && arc.start < arc.end), `normalized open arcs for ${band.id}`);
+    const start = ringPoint(band, -0.97);
+    const end = ringPoint(band, 0.97);
+    assert.ok(Math.hypot(start.x - end.x, start.y - end.y) > band.rx * 1.9, `${band.id} must remain open`);
+  }
+
+  const bins = new Map();
+  for (const position of layout.positions.values()) {
+    const key = `${Math.round(position.x / 4)},${Math.round(position.y / 4)}`;
+    bins.set(key, (bins.get(key) ?? 0) + 1);
+  }
+  const occupancies = [...bins.values()];
+  const collided = occupancies.filter((count) => count > 1).reduce((sum, count) => sum + count, 0);
+  assert.ok(collided / layout.positions.size < 0.01, `4-unit collision ratio ${collided / layout.positions.size}`);
+  assert.ok(Math.max(...occupancies) <= 2, `maximum fold-cell occupancy ${Math.max(...occupancies)}`);
+
+  const core = [...layout.positions.values()].filter((position) => position.layer === 'asm');
   assert.ok(core.length > 0);
   assert.ok(core.every((position) => Math.hypot(position.x, position.y) <= layout.coreRadius));
 });

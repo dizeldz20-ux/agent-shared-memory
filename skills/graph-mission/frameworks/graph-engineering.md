@@ -2,7 +2,7 @@
 
 The method behind this skill: a prompt is not a list of instructions, it is a graph waiting to be typed. Nodes are steps and claims; edges are dependencies and evidence. Synthesized from the Karpathy autoresearch loop, the AgentHub commit DAG, Anthropic's workflow patterns, and the Knowledge Graph Cookbook.
 
-This is execution-time graph thinking. It builds no persistent graph database — the graph exists for one mission and dies with it, leaving only its lineage file and whatever knowledge got written back. (The *persistent* graph is a separate thing: that is the C2B brain this skill recalls from.)
+This is execution-time graph thinking. It builds no persistent graph database — the graph exists for one mission and dies with it, leaving only its lineage file and whatever knowledge got written back. (The *persistent* graph is a separate thing: that is the ASM brain this skill recalls from.)
 
 ## Core Concepts
 

@@ -1,7 +1,8 @@
 import { useEffect, useRef } from 'react';
 import type { LiveEvent } from './types';
+import { createLiveBatcher } from './liveBatch';
 
-/** WebSocket to the C2B server with auto-reconnect; batches arrive as LiveEvent[]. */
+/** WebSocket to the ASM server with auto-reconnect; batches arrive as LiveEvent[]. */
 const LIVE_PATH = (import.meta as ImportMeta & { env?: Record<string, string> }).env?.VITE_STATIC_PREVIEW === '1' ? '' : '/ws';
 
 export function useLive(
@@ -24,6 +25,9 @@ export function useLive(
     let retry = 1000;
     let pingTimer: ReturnType<typeof setInterval> | undefined;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    const batcher = createLiveBatcher<LiveEvent>((batch) => {
+      if (!dead) cbRef.current(batch);
+    });
 
     const connect = () => {
       if (dead) return;
@@ -37,11 +41,12 @@ export function useLive(
       ws.onmessage = (m) => {
         try {
           const evs = JSON.parse(m.data);
-          if (Array.isArray(evs)) cbRef.current(evs);
+          if (Array.isArray(evs)) batcher.enqueue(evs);
         } catch { /* ignore malformed frames */ }
       };
       ws.onclose = () => {
         if (pingTimer) clearInterval(pingTimer);
+        batcher.flush();
         statusRef.current(false);
         if (!dead) {
           retryTimer = setTimeout(connect, retry);
@@ -55,6 +60,7 @@ export function useLive(
       dead = true;
       if (pingTimer) clearInterval(pingTimer);
       if (retryTimer) clearTimeout(retryTimer);
+      batcher.dispose();
       ws?.close();
     };
   }, [enabled]);

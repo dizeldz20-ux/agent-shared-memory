@@ -6,14 +6,14 @@ import {
   digestAnatomicalTargets,
 } from '../src/anatomical2d.ts';
 
-const layers = ['c2b', 'vault', 'api', 'web', 'ops', 'lab', 'ephemeral'];
+const layers = ['asm', 'vault', 'api', 'web', 'ops', 'lab', 'ephemeral'];
 const kinds = ['root', 'dir', 'file', 'page', 'ephemeral'];
 
 function fixture() {
   const nodes = [];
   let i = 0;
   for (const layer of layers) {
-    const count = layer === 'ops' ? 973 : layer === 'c2b' ? 42 : 105;
+    const count = layer === 'ops' ? 973 : layer === 'asm' ? 42 : 105;
     for (let j = 0; j < count; j++) {
       nodes.push({
         id: `${layer}:${String(j).padStart(4, '0')}`,
@@ -49,18 +49,32 @@ test('buildAnatomicalGraph2D clones data, seeds deterministic targets, and never
   assert.notEqual(a.nodes[0].x, 9999);
 });
 
-test('targets form a bounded bilateral brain with central fissure and balanced heavy layers', () => {
+test('targets expose a wide bilateral neural atlas with a restrained shared core', () => {
   const graph = buildAnatomicalGraph2D(fixture());
   const xs = graph.nodes.map((n) => n.__targetX);
   const ys = graph.nodes.map((n) => n.__targetY);
-  assert.ok(Math.min(...xs) >= -340 && Math.max(...xs) <= 340, `x extent ${Math.min(...xs)}..${Math.max(...xs)}`);
-  assert.ok(Math.min(...ys) >= -235 && Math.max(...ys) <= 235, `y extent ${Math.min(...ys)}..${Math.max(...ys)}`);
-  const ops = graph.nodes.filter((n) => n.layer === 'ops');
-  const left = ops.filter((n) => n.__hemisphere === 'left').length;
-  const right = ops.filter((n) => n.__hemisphere === 'right').length;
-  assert.ok(Math.abs(left - right) <= 1, `ops imbalance ${left}/${right}`);
-  const nearFissure = graph.nodes.filter((n) => n.kind !== 'root' && Math.abs(n.__targetX) < 18 && Math.abs(n.__targetY) > 28).length;
-  assert.ok(nearFissure < graph.nodes.length * 0.08, `central fissure too crowded ${nearFissure}`);
+  const actualWidth = Math.max(...xs) - Math.min(...xs);
+  const actualHeight = Math.max(...ys) - Math.min(...ys);
+  const atlasWidth = graph.atlas.maxX - graph.atlas.minX;
+  const atlasHeight = graph.atlas.maxY - graph.atlas.minY;
+
+  assert.equal(graph.atlas.positions.size, graph.nodes.length, 'every source neuron needs an atlas target');
+  assert.ok(actualWidth >= 1600, `atlas should use the wide workspace, got ${actualWidth}`);
+  assert.ok(actualHeight >= 450, `atlas should use the safe vertical band, got ${actualHeight}`);
+  assert.ok(atlasWidth >= actualWidth && atlasHeight >= actualHeight, 'reported bounds must cover every neuron');
+  assert.ok(graph.atlas.aspectRatio >= 2 && graph.atlas.aspectRatio <= 3.4, `atlas aspect ${graph.atlas.aspectRatio}`);
+  assert.ok(graph.atlas.minimumSpacing >= 1.5, `minimum spacing ${graph.atlas.minimumSpacing}`);
+  assert.ok(graph.atlas.anchorCount > 20 && graph.atlas.anchorCount < graph.nodes.length, `anchor count ${graph.atlas.anchorCount}`);
+
+  const core = graph.nodes.filter((node) => node.layer === 'asm');
+  assert.ok(core.every((node) => node.__hemisphere === 'center'));
+  assert.ok(core.every((node) => Math.abs(node.__targetX) <= 80 && Math.abs(node.__targetY) <= 60));
+  const tissue = graph.nodes.filter((node) => node.layer !== 'asm');
+  assert.ok(tissue.every((node) => node.__hemisphere === 'left' || node.__hemisphere === 'right'));
+  assert.deepEqual(new Set(tissue.map((node) => node.__hemisphere)), new Set(['left', 'right']));
+  assert.ok(tissue.every((node) => typeof node.__anchorId === 'string' && node.__anchorId.length > 0));
+  const nearFissure = tissue.filter((node) => Math.abs(node.__targetX) < 18).length;
+  assert.ok(nearFissure < tissue.length * 0.01, `central fissure too crowded ${nearFissure}`);
 });
 
 test('link style buckets are real bounded discrete values', () => {

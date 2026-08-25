@@ -36,8 +36,8 @@ function hash01(value: string): number {
 function targetRadius(n: BrainNode): number {
   const [center, jitter] = KIND_RADIUS[n.kind] ?? [0.66, 0.12];
   const r = center + (hash01(`${n.id}:radius`) * 2 - 1) * jitter;
-  // C2B maps itself as a compact nucleus at the brain's core (the thalamus)
-  return n.layer === 'c2b' ? r * 0.28 : r;
+  // ASM maps itself as a compact nucleus at the brain's core (the thalamus)
+  return n.layer === 'asm' ? r * 0.28 : r;
 }
 
 /** Seed initial positions in the correct lobe AND depth layer. */

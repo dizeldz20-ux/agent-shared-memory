@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# C2B refresh (POSIX port of refresh.ps1 — macOS/Linux): re-extract code graphs, rebuild the
+# ASM refresh (POSIX port of refresh.ps1 — macOS/Linux): re-extract code graphs, rebuild the
 # vault's okf bundle, re-merge brain.json, redeploy the runtime copies, hot-reload a running
 # server. Reads the same sources.json merge.py does, so the project list lives in one place.
 set -euo pipefail
 
-C2B="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-RUNTIME="$HOME/.claude/c2b"
-HOOKS="$HOME/.claude/hooks"
+ASM="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RUNTIME="${ASM_HOME:-$HOME/.asm}"
+HOOKS="$RUNTIME/hooks"
 
 # uv and graphify install outside the default PATH (~/.local/bin, and on macOS the per-version
 # user-site bin under ~/Library/Python). Prepend rather than depend on the user's shell profile:
@@ -14,7 +14,7 @@ HOOKS="$HOME/.claude/hooks"
 for d in "$HOME/Library/Python"/*/bin; do [ -d "$d" ] && PATH="$d:$PATH"; done
 export PATH="$HOME/.local/bin:$PATH"
 
-VAULT="$(python3 -c 'import json,os,sys; c=json.load(open(sys.argv[1])); v=c.get("vault"); print(os.path.abspath(os.path.join(os.path.dirname(sys.argv[1]), v)) if v else "")' "$C2B/sources.json")"
+VAULT="$(python3 -c 'import json,os,sys; c=json.load(open(sys.argv[1])); v=c.get("vault"); print(os.path.abspath(os.path.join(os.path.dirname(sys.argv[1]), v)) if v else "")' "$ASM/sources.json")"
 
 # Two generators write the same three files (okf/index.md, catalog.json, graph.json) and the
 # last one to run wins. okf/okf-build.mjs is the canonical one — it also maintains the split
@@ -30,22 +30,22 @@ elif [ -n "$VAULT" ] && [ -f "$VAULT/tools/build_okf.py" ]; then
 fi
 
 echo "== graphify extract (code-only, local AST) =="
-python3 - "$C2B/sources.json" <<'PY' | while IFS=$'\t' read -r raw base; do
-import json, os, sys
-cfg = json.load(open(sys.argv[1]))
-root = os.path.dirname(os.path.abspath(sys.argv[1]))
-for s in cfg["sources"]:
-    base = s["base"]
-    if not os.path.isabs(base):
-        base = os.path.abspath(os.path.join(root, base))
-    print(f"{s['raw']}\t{base}")
-PY
+while IFS=$'\t' read -r raw base; do
   echo "-- $raw"
-  graphify extract "$base" --code-only --out "$C2B/data/raw/$raw"
-done
+  # A source whose tree is gone (a deleted worktree, a repo moved) must not abort the run:
+  # under `set -e` that kills the pipeline BEFORE the merge, so brain.json silently stops
+  # tracking every OTHER source too. Skip it loudly and keep its last extract in data/raw.
+  if [ ! -d "$base" ]; then
+    echo "   !! base not found: $base — skipping (data/raw/$raw keeps its last extract, now STALE)" >&2
+    continue
+  fi
+  if ! graphify extract "$base" --code-only --out "$ASM/data/raw/$raw"; then
+    echo "   !! extraction failed: $base — merge will retain a previous extract or mark this source empty" >&2
+  fi
+done < <(python3 "$ASM/source_manifest.py" "$ASM/sources.json" --tsv)
 
 echo "== merge -> brain.json =="
-cd "$C2B"
+cd "$ASM"
 uv run python merge.py
 
 echo "== deploy runtime copies =="
@@ -53,18 +53,43 @@ mkdir -p "$RUNTIME" "$HOOKS"
 # brain.json goes out atomically: a plain copy truncates in place, and a session starting
 # inside that window gets an MCP server that cannot parse it and fails to boot.
 for f in brain.json brain.index.json; do
-  cp "$C2B/data/$f" "$RUNTIME/$f.tmp"
+  cp "$ASM/data/$f" "$RUNTIME/$f.tmp"
   mv -f "$RUNTIME/$f.tmp" "$RUNTIME/$f"
 done
-cp -f "$C2B/mcp_server.py" "$RUNTIME/"
-cp -f "$C2B/pyproject.toml" "$RUNTIME/" 2>/dev/null || true
-cp -f "$C2B/hook/c2b-hook.js" "$C2B/hook/c2b-session-start.js" \
-      "$C2B/hook/c2b-prompt-hook.js" "$C2B/hook/c2b-session-doc.js" "$HOOKS/"
+cp -f "$ASM/mcp_server.py" "$RUNTIME/"
+cp -f "$ASM/pyproject.toml" "$RUNTIME/" 2>/dev/null || true
+cp -f "$ASM/hook/asm-activity-hook.js" "$ASM/hook/asm-session-start.js" \
+      "$ASM/hook/asm-prompt-recall.js" "$ASM/hook/asm-memory-gate.js" "$HOOKS/"
 
-# The deployed hooks live in ~/.claude/hooks and cannot see sources.json, so publish the
+# Publish one cross-agent copy for Codex, Cursor, Kimi Code, and Grok Build, plus
+# Claude Code's client-specific compatibility copy. Avoid a duplicate under
+# ~/.codex/skills because Codex also scans ~/.agents/skills.
+for skill_root in "$HOME/.agents/skills" "$HOME/.claude/skills"; do
+  mkdir -p "$skill_root/agent-shared-memory"
+  cp -f "$ASM/skills/agent-shared-memory/SKILL.md" "$skill_root/agent-shared-memory/SKILL.md"
+done
+
+# Older ASM refreshes also wrote the same managed file under ~/.codex/skills, which
+# makes clients that scan both roots expose the protocol twice. Remove only a
+# byte-identical managed copy; preserve the directory if the user changed or extended it.
+legacy_codex_skill="$HOME/.codex/skills/agent-shared-memory"
+if [ -f "$legacy_codex_skill/SKILL.md" ] && \
+   cmp -s "$ASM/skills/agent-shared-memory/SKILL.md" "$legacy_codex_skill/SKILL.md"; then
+  rm -f "$legacy_codex_skill/SKILL.md"
+  rmdir "$legacy_codex_skill" 2>/dev/null || true
+fi
+
+# graph-mission has a Codex-native variant because Codex uses different planning,
+# collaboration, skill-routing and lineage surfaces than Claude Code. Current Codex
+# discovers user-authored skills from ~/.agents/skills. Do not duplicate it under
+# ~/.codex/skills: clients that scan both roots expose two selectors with the same name.
+mkdir -p "$HOME/.agents/skills/graph-mission"
+cp -R "$ASM/skills/codex/graph-mission/." "$HOME/.agents/skills/graph-mission/"
+
+# The deployed hooks live in ~/.asm/hooks and cannot see sources.json, so publish the
 # resolved paths next to the runtime graph. Without this the documentation gate has no vault
-# to point at and stays silent — see the session-doc note in the README.
-python3 - "$RUNTIME/c2b-paths.json" "$VAULT" "$C2B" <<'PY'
+# to point at and stays silent — see the memory-gate note in the README.
+python3 - "$RUNTIME/asm-paths.json" "$VAULT" "$ASM" <<'PY'
 import json, sys
 json.dump({"vault": sys.argv[2], "repo": sys.argv[3]}, open(sys.argv[1], "w"), indent=2)
 PY

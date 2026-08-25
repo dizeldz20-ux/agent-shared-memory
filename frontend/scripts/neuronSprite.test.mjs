@@ -62,7 +62,7 @@ test('sprite keys separate every colour, state, and core variant', () => {
   assert.equal(keys.size, LAYERS.length * STATES.length * 2);
 });
 
-test('paintNeuron issues a complete additive-glow / body / rim pass', () => {
+test('paintNeuron issues a hollow membrane / halo / focus-core pass', () => {
   const calls = [];
   const gradient = () => ({ addColorStop: (stop, value) => calls.push(['stop', stop, value]) });
   const ctx = new Proxy({}, {
@@ -79,8 +79,8 @@ test('paintNeuron issues a complete additive-glow / body / rim pass', () => {
   paintNeuron(ctx, '#33B1FF', 'picked', true);
   const names = calls.map((c) => c[0]);
   assert.ok(names.includes('clearRect'), 'sprite must start from a clean canvas');
-  assert.equal(names.filter((n) => n === 'gradient').length, 3, 'glow, body, and core spark');
-  assert.ok(names.filter((n) => n === 'fill').length >= 3);
+  assert.equal(names.filter((n) => n === 'gradient').length, 2, 'halo and focus core only');
+  assert.ok(names.filter((n) => n === 'fill').length >= 2);
   assert.ok(names.filter((n) => n === 'stroke').length >= 2, 'rim light plus picked contour');
   const composites = calls.filter((c) => c[0] === 'set' && c[1] === 'globalCompositeOperation').map((c) => c[2]);
   assert.ok(composites.includes('lighter'), 'glow must be additive');
