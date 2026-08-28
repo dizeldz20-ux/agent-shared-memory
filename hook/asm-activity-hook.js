@@ -95,10 +95,31 @@ function isAsmTool(value) {
 }
 
 function cleanCandidate(value) {
-  return String(value || '')
+  const cleaned = String(value || '')
     .trim()
     .replace(/^["'`]|["'`,;:)\]}]+$/g, '')
     .replace(/:\d+(?::\d+)?$/, '');
+  // Shell commands pass `~/x` unexpanded; resolving it against cwd fabricated paths like
+  // <cwd>/~/.asm/pending.jsonl that then entered the graph-matching pipeline as files.
+  return /^~(?:[\/\\]|$)/.test(cleaned) ? os.homedir() + cleaned.slice(1) : cleaned;
+}
+
+// Mutation targets that are never project files: device nodes, `date +%Y…` format strings
+// the redirect parser mistook for paths, and temp/scratch trees OUTSIDE the session's cwd.
+// A temp path under cwd is a real project mutation (test suites run there); one outside it
+// is an agent's scratchpad. They polluted the session marker, so the memory gate asked
+// agents to document /dev/null.
+const TEMP_TREE = /^(?:\/private)?(?:\/tmp\/|\/var\/folders\/)/;
+
+// macOS reports the same temp tree as /tmp and /private/tmp depending on who resolved it.
+const canonical = (value) => String(value || '').replace(/^\/private(?=\/)/, '');
+
+function isJunkMutation(candidate, resolved, cwd) {
+  // `+%Y%m%d` is a date format; `+page.svelte` is a real SvelteKit file.
+  if (/^\+%/.test(candidate) || resolved.startsWith('/dev/')) return true;
+  if (!TEMP_TREE.test(resolved)) return false;
+  const root = canonical(cwd).replace(/[\/\\]+$/, '');
+  return !(root && canonical(resolved).startsWith(`${root}/`));
 }
 
 function existingFile(value, cwd) {
@@ -133,6 +154,7 @@ function mutationPath(value, cwd) {
   if (!candidate || candidate.includes('://') || candidate.startsWith('-')) return null;
   if (/[\0\r\n*?{}()[\]$=<>|]/.test(candidate)) return null;
   const resolved = path.isAbsolute(candidate) ? candidate : path.resolve(cwd || process.cwd(), candidate);
+  if (isJunkMutation(candidate, resolved, cwd)) return null;
   try {
     fs.statSync(resolved);
     return resolved;

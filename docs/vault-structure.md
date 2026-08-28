@@ -37,6 +37,7 @@ tags: [api, deploy, gotcha]   # tags matching a layer's xlayerTags → edge to t
 resource: /path/to/real/resource     # a path-like value → direct edge to that code file
 related: [other-page-id, another-id] # page-to-page edges in the knowledge graph
 contradictions: [superseded-id]      # when a page revises an older one — never overwrite silently
+aliases: [סוויפר, Sweeper]           # alternate/Hebrew names for recall only; never creates edges
 ---
 ```
 

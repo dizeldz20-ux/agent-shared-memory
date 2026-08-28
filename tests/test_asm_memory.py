@@ -19,17 +19,18 @@ from source_manifest import expanded_sources
 PROJECT = Path(__file__).resolve().parents[1]
 
 
-def load_mcp(runtime: Path):
+def load_mcp(runtime: Path, nodes=None, links=None):
     shutil.copy2(PROJECT / "mcp_server.py", runtime / "mcp_server.py")
     (runtime / "brain.json").write_text(json.dumps({
         "generatedAt": "2026-08-25T00:00:00Z",
-        "nodes": [
+        "nodes": nodes if nodes is not None else [
             {"id": "agents:src/app.py", "label": "app.py", "layer": "agents", "kind": "file",
              "path": "src/app.py", "abs": "/work/src/app.py"},
             {"id": "vault:app-rule", "label": "App rule", "layer": "vault", "kind": "page",
              "path": "wiki/app-rule.md", "meta": {"description": "Important regression rule", "tags": ["app"]}},
         ],
-        "links": [{"source": "agents:src/app.py", "target": "vault:app-rule", "type": "xlayer"}],
+        "links": links if links is not None else [
+            {"source": "agents:src/app.py", "target": "vault:app-rule", "type": "xlayer"}],
     }), encoding="utf-8")
     spec = importlib.util.spec_from_file_location(f"asm_mcp_test_{id(runtime)}", runtime / "mcp_server.py")
     module = importlib.util.module_from_spec(spec)
@@ -125,6 +126,154 @@ class SharedMemoryTests(unittest.TestCase):
     def test_record_rejects_empty_handoffs(self):
         result = self.module.memory_record("", "short", "too short")
         self.assertFalse(result["ok"])
+
+    def test_record_scrubs_credentials_and_reports_only_the_kinds(self):
+        key = "sk-ant-" + "a1b2c3d4e5" * 4
+        result = self.module.memory_record(
+            session_id="scrub-1",
+            summary="Rotated the provider key",
+            details=f"New key {key} stored in the vault; password: hunter22hunter is the DB one.",
+            files=[], decisions=[f"Authorization: Bearer {'x1' * 12} was the old header"],
+            open_threads=["Card 4111 1111 1111 1111 must be removed from the test fixture"],
+        )
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["redactions"], ["api-key", "credential-pair", "bearer", "credit-card"])
+        stored = (self.runtime / "memory.jsonl").read_text(encoding="utf-8")
+        self.assertNotIn(key, stored)
+        self.assertNotIn("hunter22hunter", stored)
+        self.assertIn("[redacted: api-key]", stored)
+        self.assertIn("****1111", stored)
+        # Operational facts and code talk stay: phones, internal addresses, `token: string`.
+        plain = self.module.memory_record(
+            "scrub-2", "Noa line documented",
+            "Noa answers on 0733861992 via 10.0.0.12; token: string, password: required field, "
+            "secret = os.environ['TOWER_CREDENTIAL_KEY'], Basic authentication-header parsing.")
+        self.assertEqual(plain["redactions"], [])
+        self.assertIn("0733861992", plain["record"]["details"])
+        self.assertIn("password: required field", plain["record"]["details"])
+        self.assertIn("os.environ['TOWER_CREDENTIAL_KEY']", plain["record"]["details"])
+
+    def test_superseded_record_leaves_recall_but_stays_readable_by_id(self):
+        first = self.module.memory_record("sup-1", "Startup flag defaults to off", "Verified the launcher reads STARTUP_FLAG=0 by default.")["record"]
+        second = self.module.memory_record(
+            "sup-2", "Startup flag defaults to on since v2", "Re-verified after the v2 launcher change.",
+            supersedes=[f"memory:{first['id']}"])["record"]
+        self.assertEqual(second["supersedes"], [first["id"]])
+        ids = [item["id"] for item in self.module.brain_search("startup flag")]
+        self.assertIn(f"memory:{second['id']}", ids)
+        self.assertNotIn(f"memory:{first['id']}", ids)
+        self.assertEqual([r["id"] for r in self.module.memory_recent()], [second["id"]])
+        by_id = self.module.brain_node(f"memory:{first['id']}")
+        self.assertEqual(by_id["superseded_by"], second["id"])
+        # The retired record also leaves the graph; a typo'd id is reported, not obeyed.
+        self.assertNotIn(f"memory:{first['id']}", self.module.NODES)
+        self.assertIn(f"memory:{second['id']}", self.module.NODES)
+        typo = self.module.memory_record("sup-3", "Unrelated note about the launcher", "Nothing to retire here really.",
+                                         supersedes=["deadbeefdeadbeef", "sup-3"])
+        self.assertEqual(typo["ignored_supersedes"], ["deadbeefdeadbeef", "sup-3"])
+        self.assertNotIn("supersedes", typo["record"])
+        # Explicit search still reads details, unlike the prompt hook.
+        self.assertTrue(any(item["id"] == f"memory:{typo['record']['id']}"
+                            for item in self.module.brain_search("retire")))
+
+    def test_records_join_the_graph_through_fail_closed_touches_edges(self):
+        record = self.module.memory_record(
+            "graph-1", "Hardened the app entrypoint", "Added the guard and the regression test.",
+            files=["/work/src/app.py", "README.md", "nowhere/else.py"])["record"]
+        mid = f"memory:{record['id']}"
+        neighbors = self.module.brain_neighbors("agents:src/app.py")
+        touching = [n for n in neighbors if n["id"] == mid]
+        self.assertEqual(len(touching), 1)
+        self.assertEqual(touching[0]["via"], "touches")
+        self.assertEqual(touching[0]["kind"], "memory")
+        # README.md (one segment) and nowhere/else.py (unknown) attach to nothing.
+        self.assertEqual([n["id"] for n in self.module.brain_neighbors(mid)], ["agents:src/app.py"])
+        self.assertIsNone(self.module.find_by_path("app.py"))
+        self.assertEqual(self.module.find_by_path("src/app.py"), "agents:src/app.py")
+
+    def test_neighbor_cap_never_hides_knowledge_behind_code_edges(self):
+        hub = {"id": "agents:src/hub.py", "label": "hub.py", "layer": "agents", "kind": "file",
+               "path": "src/hub.py", "abs": "/work/src/hub.py"}
+        leaves = [{"id": f"agents:src/leaf{i}.py", "label": f"leaf{i}.py", "layer": "agents", "kind": "file",
+                   "path": f"src/leaf{i}.py", "abs": f"/work/src/leaf{i}.py"} for i in range(70)]
+        page = {"id": "vault:hub-rule", "label": "Hub rule", "layer": "vault", "kind": "page",
+                "path": "wiki/hub.md", "meta": {"description": "Hub trap", "tags": []}}
+        links = [{"source": hub["id"], "target": leaf["id"], "type": "code", "weight": 1} for leaf in leaves]
+        links.append({"source": page["id"], "target": hub["id"], "type": "xlayer"})
+        module = load_mcp(self.runtime, nodes=[hub, page, *leaves], links=links)
+        record = module.memory_record("cap-1", "Refactored the hub module", "Split the hub into leaves.",
+                                      files=["/work/src/hub.py"])["record"]
+        vias = [n["via"] for n in module.brain_neighbors(hub["id"])]
+        self.assertEqual(len(vias), 50)
+        self.assertEqual(vias[:2], ["xlayer", "touches"])
+        context = module.brain_context("/work/src/hub.py")
+        self.assertEqual(context["vault_pages"][0]["id"], "vault:hub-rule")
+        self.assertEqual(context["shared_memory"][0]["id"], record["id"])
+
+    def test_find_by_path_refuses_an_ambiguous_suffix(self):
+        module = load_mcp(self.runtime, nodes=[
+            {"id": "a:src/app.py", "label": "app.py", "layer": "agents", "kind": "file",
+             "path": "src/app.py", "abs": "/work/a/src/app.py"},
+            {"id": "b:src/app.py", "label": "app.py", "layer": "agents", "kind": "file",
+             "path": "src/app.py", "abs": "/work/b/src/app.py"},
+        ], links=[])
+        self.assertIsNone(module.find_by_path("src/app.py"))
+        self.assertEqual(module.find_by_path("/work/a/src/app.py"), "a:src/app.py")
+        self.assertEqual(module.find_by_path("b/src/app.py"), "b:src/app.py")
+
+    def test_node_opens_are_logged_to_usage(self):
+        self.module.brain_node("vault:app-rule")
+        self.module.brain_node("vault:does-not-exist")
+        self.module.brain_context("/work/src/app.py")
+        self.module.brain_context("nowhere.py")
+        rows = [json.loads(line) for line in (self.runtime / "usage.jsonl").read_text(encoding="utf-8").splitlines()]
+        self.assertEqual([row["node_id"] for row in rows], ["vault:app-rule", "agents:src/app.py"])
+        self.assertTrue(all(row["ts"] for row in rows))
+
+
+class RetrievalTests(unittest.TestCase):
+    """The prompt hook and brain_search must agree on tokens and rank by evidence, not volume."""
+
+    FIXTURES = json.loads((PROJECT / "tests" / "fixtures" / "tokenize.json").read_text(encoding="utf-8"))
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.runtime = Path(self.temp.name) / "runtime"
+        self.runtime.mkdir()
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def test_python_and_hook_tokenizers_agree_on_the_fixtures(self):
+        module = load_mcp(self.runtime)
+        for case in self.FIXTURES:
+            with self.subTest(text=case["text"]):
+                self.assertEqual(module.tokenize(case["text"]), case["tokens"])
+                hook = subprocess.run(
+                    ["node", str(PROJECT / "hook" / "asm-prompt-recall.js"), "--tokenize", case["text"]],
+                    capture_output=True, text=True, check=True, timeout=8)
+                self.assertEqual(json.loads(hook.stdout), case["tokens"])
+
+    def test_search_ranks_a_rare_token_above_a_token_shared_by_many_files(self):
+        nodes = [
+            {"id": f"agents:{d}/index.ts", "label": "index.ts", "layer": "agents", "kind": "file",
+             "path": f"{d}/index.ts", "abs": f"/work/{d}/index.ts"} for d in ("a", "b", "c")
+        ] + [
+            {"id": "vault:startup-rule", "label": "Regression guide", "layer": "vault", "kind": "page",
+             "path": "wiki/guide.md", "meta": {"description": "startup regression rule", "tags": []}},
+            {"id": "vault:sweeper", "label": "Sweeper", "layer": "vault", "kind": "page",
+             "path": "wiki/sweeper.md",
+             "meta": {"description": "AWS fleet monitor", "tags": ["ops"], "aliases": ["סוויפר"]}},
+        ]
+        module = load_mcp(self.runtime, nodes=nodes, links=[])
+        # Raw field weights alone put the three index.ts files (label+path = 3) above the
+        # page (description only = 1, x1.25); IDF over the hit set inverts that.
+        results = module.brain_search("index.ts startup")
+        self.assertEqual(results[0]["id"], "vault:startup-rule")
+        self.assertEqual(len(results), 4)
+        # A Hebrew alias is matched after the same stemming the hook applies.
+        self.assertEqual(module.brain_search("הסוויפר")[0]["id"], "vault:sweeper")
+        self.assertEqual(module.brain_search("   "), [])
 
 
 class HookContractTests(unittest.TestCase):
@@ -442,6 +591,107 @@ class HookContractTests(unittest.TestCase):
             "cwd": str(project),
         })
         self.assertFalse((self.runtime / "sessions" / "cursor-shell-read-only-1.json").exists())
+
+    def write_index(self):
+        (self.runtime / "brain.index.json").write_text(json.dumps([
+            {"i": "vault:app-rule", "l": "App rule", "k": "page", "p": "wiki/app-rule.md",
+             "d": "Important regression rule for widget startup", "t": ["app"]},
+            {"i": "vault:other-rule", "l": "Other rule", "k": "page", "p": "wiki/other-rule.md",
+             "d": "Unrelated deployment checklist", "t": ["ops"]},
+            {"i": "vault:sweeper", "l": "Sweeper", "k": "page", "p": "wiki/sweeper.md",
+             "d": "AWS fleet monitor", "t": ["ops"], "a": ["סוויפר"]},
+        ], ensure_ascii=False), encoding="utf-8")
+
+    def test_prompt_recall_matches_hebrew_aliases_and_fresh_memory_records(self):
+        self.write_index()
+        (self.runtime / "memory.jsonl").write_text(json.dumps({
+            "id": "abc123", "created_at": "2026-08-28T09:00:00+03:00", "agent": "Codex",
+            "summary": "Widget deploy pipeline repaired",
+            "details": "x" * 3000, "files": ["src/widget.ts"], "decisions": [],
+            "open_threads": ["Re-run the deploy on staging"],
+        }) + "\n", encoding="utf-8")
+        hebrew = self.run_hook("asm-prompt-recall.js", {"prompt": "תבדוק את הסוויפר ב-AWS"}).stdout
+        self.assertIn("vault:sweeper", hebrew)
+        self.assertNotIn("vault:app-rule", hebrew)
+        # One alias hit stands alone: the two-hit rule is for coincidences, not curated names.
+        self.assertIn("vault:sweeper", self.run_hook("asm-prompt-recall.js", {"prompt": "תבדוק את הסוויפר"}).stdout)
+        fresh = self.run_hook("asm-prompt-recall.js", {"prompt": "widget deploy staging"}).stdout
+        self.assertIn("memory:abc123 — Widget deploy pipeline repaired", fresh)
+        # One long word that merely appears in a summary is not evidence (it was: the summary
+        # scored as a label made any 8-char token a "strong" single hit).
+        self.assertEqual(self.run_hook("asm-prompt-recall.js", {"prompt": "pipeline"}).stdout, "")
+        with (self.runtime / "memory.jsonl").open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps({"id": "def456", "created_at": "2026-08-28T10:00:00+03:00",
+                                     "summary": "Something unrelated", "supersedes": ["abc123"]}) + "\n")
+        self.assertEqual(self.run_hook("asm-prompt-recall.js", {"prompt": "widget deploy staging"}).stdout, "")
+
+    def test_prompt_recall_ledger_cools_a_node_for_six_prompts(self):
+        self.write_index()
+        payload = {"session_id": "claude-recall-1", "prompt": "widget startup regression"}
+        first = self.run_hook("asm-prompt-recall.js", payload)
+        self.assertIn("vault:app-rule", first.stdout)
+        # Served at turn 1, the node stays out of the next six prompts (turns 2-7).
+        for _ in range(6):
+            self.assertEqual(self.run_hook("asm-prompt-recall.js", payload).stdout, "")
+        ledger_path = self.runtime / "sessions" / "claude-recall-1.recall.json"
+        ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+        self.assertEqual(ledger["turn"], 7)
+        self.assertEqual(ledger["entries"]["vault:app-rule"]["turn"], 1)
+        self.assertIn("vault:app-rule", self.run_hook("asm-prompt-recall.js", payload).stdout)
+
+        # A half-written ledger costs dedup for one prompt, never the injection.
+        ledger_path.write_text("{not json", encoding="utf-8")
+        self.assertIn("vault:app-rule", self.run_hook("asm-prompt-recall.js", payload).stdout)
+        self.assertEqual(json.loads(ledger_path.read_text(encoding="utf-8"))["turn"], 1)
+
+    def test_prompt_recall_without_session_id_never_writes_a_ledger(self):
+        self.write_index()
+        payload = {"prompt": "widget startup regression"}
+        for _ in range(2):
+            self.assertIn("vault:app-rule", self.run_hook("asm-prompt-recall.js", payload).stdout)
+        self.assertFalse((self.runtime / "sessions").exists())
+
+    def test_shell_mutation_marker_ignores_device_temp_and_date_format_junk(self):
+        home = Path.home()
+        self.run_hook("asm-activity-hook.js", {
+            "session_id": "claude-junk-1",
+            "tool_name": "Bash",
+            "tool_input": {"command": (
+                "ls > /dev/null 2>&1; date +%Y%m%dT%H%M%S > /private/tmp/scratch/out.txt; "
+                "tee /var/folders/h9/x/T/log.txt; mv ~/asm-junk-test.txt ~/asm-junk-test2.txt; "
+                "touch inside-cwd.txt; touch +page.svelte"
+            )},
+            "cwd": str(Path(self.temp.name)),
+        })
+        marker = json.loads((self.runtime / "sessions" / "claude-junk-1.json").read_text(encoding="utf-8"))
+        # The cwd itself sits under the macOS temp tree: mutations inside it stay real, and
+        # a SvelteKit `+page.svelte` is a file, not a date format.
+        self.assertEqual(marker["files"], [
+            str(home / "asm-junk-test.txt"), str(home / "asm-junk-test2.txt"),
+            str(Path(self.temp.name) / "inside-cwd.txt"),
+            str(Path(self.temp.name) / "+page.svelte"),
+        ])
+
+    def test_session_start_reports_dreaming_age_and_open_threads(self):
+        vault = Path(self.temp.name) / "vault"
+        (vault / "dreaming").mkdir(parents=True)
+        five_days_ago = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 5 * 86400 - 60))
+        (vault / "dreaming" / "state.json").write_text(json.dumps({"lastRun": five_days_ago}), encoding="utf-8")
+        (self.runtime / "asm-paths.json").write_text(json.dumps({"vault": str(vault)}), encoding="utf-8")
+        (self.runtime / "brain.json").write_text(json.dumps({
+            "generatedAt": "2026-08-25T00:00:00Z",
+            "nodes": [{"id": "asm:one", "layer": "asm"}],
+        }), encoding="utf-8")
+        now = time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime())
+        old = time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(time.time() - 9 * 86400))
+        (self.runtime / "memory.jsonl").write_text(
+            json.dumps({"id": "a", "created_at": now, "open_threads": ["one", "two"]}) + "\n"
+            + json.dumps({"id": "b", "created_at": old, "open_threads": ["stale"]}) + "\n",
+            encoding="utf-8")
+        output = self.run_hook("asm-session-start.js", {"session_id": "s"}).stdout
+        self.assertIn("Dreaming: last ran 5d ago", output)
+        self.assertIn("consolidation is not running", output)
+        self.assertIn('Open threads: 1 record(s) in the last 2 days ended with unfinished work — latest: "one"', output)
 
     def test_parallel_post_tool_hooks_merge_session_marker_without_lost_files(self):
         session = "parallel-marker-1"
@@ -830,6 +1080,39 @@ class CodexFallbackTests(unittest.TestCase):
         self.assertLess(elapsed, 0.5)
         self.assertEqual(activities[0]["session"], "live-session")
         self.assertEqual(activities[0]["paths"], [str(self.target.resolve())])
+
+
+@unittest.skipUnless((PROJECT / "sources.json").exists(), "merge.py needs a local sources.json")
+class DirectoryOverviewTests(unittest.TestCase):
+    def test_directories_get_a_deterministic_overview_from_their_files(self):
+        spec = importlib.util.spec_from_file_location("asm_merge_test", PROJECT / "merge.py")
+        merge = importlib.util.module_from_spec(spec)
+        assert spec.loader
+        spec.loader.exec_module(merge)
+        nodes = {
+            "agents:project:app": {"id": "agents:project:app", "kind": "dir", "label": "app"},
+            "agents:dir:app/src": {"id": "agents:dir:app/src", "kind": "dir", "label": "app/src"},
+            "agents:app/src/main.py": {"id": "agents:app/src/main.py", "kind": "file", "label": "main.py"},
+            "agents:app/src/util.py": {"id": "agents:app/src/util.py", "kind": "file", "label": "util.py"},
+            "agents:app/README.md": {"id": "agents:app/README.md", "kind": "file", "label": "README.md"},
+            "agents:dir:app/empty": {"id": "agents:dir:app/empty", "kind": "dir", "label": "app/empty"},
+            "vault:app-rule": {"id": "vault:app-rule", "kind": "page", "label": "App rule"},
+        }
+        links = [
+            {"source": "agents:project:app", "target": "agents:dir:app/src", "type": "contains"},
+            {"source": "agents:project:app", "target": "agents:app/README.md", "type": "contains"},
+            {"source": "agents:project:app", "target": "agents:dir:app/empty", "type": "contains"},
+            {"source": "agents:dir:app/src", "target": "agents:app/src/main.py", "type": "contains"},
+            {"source": "agents:dir:app/src", "target": "agents:app/src/util.py", "type": "contains"},
+            {"source": "agents:app/src/main.py", "target": "agents:app/src/util.py", "type": "code", "weight": 4},
+            {"source": "vault:app-rule", "target": "agents:app/src/main.py", "type": "xlayer"},
+        ]
+        self.assertEqual(merge.describe_directories(nodes, links), 2)
+        self.assertEqual(nodes["agents:dir:app/src"]["meta"]["description"],
+                         "2 files (Python) · hubs: main.py, util.py · knowledge: App rule")
+        self.assertEqual(nodes["agents:project:app"]["meta"]["description"],
+                         "3 files (Python, Markdown) · hubs: main.py, util.py · knowledge: App rule")
+        self.assertNotIn("meta", nodes["agents:dir:app/empty"])
 
 
 class SourceDiscoveryTests(unittest.TestCase):

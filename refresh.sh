@@ -8,6 +8,18 @@ ASM="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUNTIME="${ASM_HOME:-$HOME/.asm}"
 HOOKS="$RUNTIME/hooks"
 
+# --changed: re-extract only sources with a file newer than their last extract (or an
+# extract older than 3 days), then merge everything. A full run over every mapped project
+# takes long enough that the graph went stale for days; this makes a refresh cheap enough
+# to run after every real change.
+CHANGED_ONLY=0
+for arg in "$@"; do
+  case "$arg" in
+    --changed) CHANGED_ONLY=1 ;;
+    *) echo "unknown option: $arg (supported: --changed)" >&2; exit 2 ;;
+  esac
+done
+
 # uv and graphify install outside the default PATH (~/.local/bin, and on macOS the per-version
 # user-site bin under ~/Library/Python). Prepend rather than depend on the user's shell profile:
 # this script is also fired from schedulers, and launchd/cron give a job almost no PATH at all.
@@ -38,6 +50,18 @@ while IFS=$'\t' read -r raw base; do
   if [ ! -d "$base" ]; then
     echo "   !! base not found: $base — skipping (data/raw/$raw keeps its last extract, now STALE)" >&2
     continue
+  fi
+  raw_json="$ASM/data/raw/$raw/graphify-out/graph.json"
+  if [ "$CHANGED_ONLY" = 1 ] && [ -f "$raw_json" ] && [ -z "$(find "$raw_json" -mtime +3)" ]; then
+    # A find that cannot read the tree (launchd without Full Disk Access on ~/Desktop) must
+    # count as "changed", not as "unchanged": stderr is kept and the exit code is checked.
+    # Deletions alone never produce a newer file; the 3-day age rule covers those.
+    if newer="$(find "$base" -type f -newer "$raw_json" \
+                -not -path '*/node_modules/*' -not -path '*/.git/*' -not -path '*/.venv/*' \
+                -print -quit 2>&1)" && [ -z "$newer" ]; then
+      echo "   unchanged since the last extract — skipped"
+      continue
+    fi
   fi
   if ! graphify extract "$base" --code-only --out "$ASM/data/raw/$raw"; then
     echo "   !! extraction failed: $base — merge will retain a previous extract or mark this source empty" >&2

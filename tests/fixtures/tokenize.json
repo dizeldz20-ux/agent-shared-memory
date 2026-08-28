@@ -1,0 +1,55 @@
+[
+ {
+  "text": "תבדוק את הסוויפר ב-AWS בפרודקשן",
+  "tokens": [
+   "סוויפר",
+   "aws",
+   "פרודקשן"
+  ]
+ },
+ {
+  "text": "Fix the sweeper deploy scripts, please!",
+  "tokens": [
+   "sweeper",
+   "deploy",
+   "scripts"
+  ]
+ },
+ {
+  "text": "האישורים של הלקוחות",
+  "tokens": [
+   "אישור",
+   "לקוח"
+  ]
+ },
+ {
+  "text": "src/app.py ./run.sh ../x",
+  "tokens": [
+   "src/app.py",
+   "run.sh"
+  ]
+ },
+ {
+  "text": "aws AWS Aws",
+  "tokens": [
+   "aws"
+  ]
+ },
+ {
+  "text": "ab cd ef",
+  "tokens": []
+ },
+ {
+  "text": "ה-sweeper מול Vocaly",
+  "tokens": [
+   "sweeper",
+   "vocaly"
+  ]
+ },
+ {
+  "text": "𝐚𝐛 hello",
+  "tokens": [
+   "hello"
+  ]
+ }
+]

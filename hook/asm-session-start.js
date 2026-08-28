@@ -9,6 +9,48 @@ const os = require('os');
 const path = require('path');
 const RUNTIME = process.env.ASM_HOME || path.join(os.homedir(), '.asm');
 const BRAIN = path.join(RUNTIME, 'brain.json');
+const PATHS = path.join(RUNTIME, 'asm-paths.json');
+const MEMORY = path.join(RUNTIME, 'memory.jsonl');
+
+function readJson(file) {
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; }
+}
+
+// The nightly consolidation (vault dreaming) died silently for 16 days once; its state
+// file is the only place that knows. One line here is what makes that visible.
+function dreamingLine() {
+  const vault = readJson(PATHS)?.vault;
+  if (!vault) return '';
+  const state = readJson(path.join(vault, 'dreaming', 'state.json'));
+  if (!state || !state.lastRun) return '';
+  const days = Math.floor((Date.now() - Date.parse(state.lastRun)) / 86400000);
+  if (!Number.isFinite(days)) return '';
+  const warn = days >= 2 ? ' — consolidation is not running; ask for /vault-dreaming' : '';
+  return `Dreaming: last ran ${days}d ago${warn}\n`;
+}
+
+// Unfinished work left by any agent in the last two days: the cheapest "what is open"
+// signal there is, and it lives in memory.jsonl rather than the 3-day-old graph. A raw
+// thread count (345 in one week) is noise; the record count plus the newest thread is not.
+function openThreadsLine() {
+  let text;
+  try { text = fs.readFileSync(MEMORY, 'utf8'); } catch { return ''; }
+  const since = Date.now() - 2 * 86400000;
+  let records = 0;
+  let latest = null;
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue;
+    let record;
+    try { record = JSON.parse(line); } catch { continue; }
+    const at = Date.parse(record.created_at || '');
+    const threads = Array.isArray(record.open_threads) ? record.open_threads : [];
+    if (!(at >= since) || !threads.length) continue;
+    records += 1;
+    if (!latest || at > latest.at) latest = { at, thread: String(threads[0]) };
+  }
+  if (!records) return '';
+  return `Open threads: ${records} record(s) in the last 2 days ended with unfinished work — latest: "${latest.thread.slice(0, 120)}" (mcp__asm__memory_recent for the rest)\n`;
+}
 
 function hookInput() {
   if (process.stdin.isTTY) return {};
@@ -47,7 +89,7 @@ try {
 
   const context = `ASM — AGENT SHARED MEMORY ONLINE. One graph for the Obsidian vault + all mapped project code.
 Mapped: ${layers} | ${b.nodes.length} nodes${stale}
-
+${dreamingLine()}${openThreadsLine()}
 STANDING RULE for every agent — recall before reading; record after changing:
 - Before the first Read/Edit of any file in a mapped project, call mcp__asm__brain_context(file_path).
   Its vault_pages field returns what a human already wrote about that file: the traps, the decisions.

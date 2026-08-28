@@ -7,7 +7,7 @@ Stdlib only. Configure sources.json (see sources.example.json), then:
 """
 import json
 import sys
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -28,6 +28,68 @@ CODE_SOURCES = [
 
 def norm(p) -> str:
     return str(p).replace("\\", "/").lower()
+
+
+LANG_BY_EXT = {
+    "py": "Python", "ts": "TypeScript", "tsx": "TypeScript", "js": "JavaScript", "mjs": "JavaScript",
+    "cjs": "JavaScript", "jsx": "JavaScript", "rs": "Rust", "go": "Go", "sh": "Shell", "md": "Markdown",
+    "json": "JSON", "yaml": "YAML", "yml": "YAML", "sql": "SQL", "html": "HTML", "css": "CSS",
+    "swift": "Swift", "kt": "Kotlin", "java": "Java", "toml": "TOML",
+}
+
+
+def describe_directories(nodes: dict[str, dict], links: list[dict]) -> int:
+    """Deterministic overview for every dir/project node — size, languages, hub files and
+    the vault pages that point into it. No LLM: this is what brain_context on a directory
+    returned nothing for, and what lets `brain_search("pacobot server")` land on the folder
+    rather than on one of its 200 files. Returns the number of nodes described."""
+    children: dict[str, list[str]] = defaultdict(list)
+    degree: Counter[str] = Counter()
+    pages: dict[str, list[str]] = defaultdict(list)
+    for e in links:
+        if e["type"] == "contains":
+            children[e["source"]].append(e["target"])
+        elif e["type"] == "code":
+            degree[e["source"]] += e.get("weight", 1)
+            degree[e["target"]] += e.get("weight", 1)
+        elif e["type"] == "xlayer" and nodes.get(e["target"], {}).get("kind") == "file":
+            pages[e["target"]].append(nodes[e["source"]]["label"])
+
+    def files_under(did: str) -> list[str]:
+        out, stack, seen = [], [did], set()
+        while stack:
+            for child in children.get(stack.pop(), []):
+                if child in seen:
+                    continue
+                seen.add(child)
+                kind = nodes[child]["kind"]
+                if kind == "file":
+                    out.append(child)
+                elif kind == "dir":
+                    stack.append(child)
+        return out
+
+    described = 0
+    for nid, n in nodes.items():
+        if n["kind"] != "dir":
+            continue
+        files = files_under(nid)
+        if not files:
+            continue
+        langs: Counter[str] = Counter(
+            LANG_BY_EXT.get(nodes[f]["label"].rsplit(".", 1)[-1].lower(), "") for f in files)
+        langs.pop("", None)
+        parts = [f"{len(files)} files" + (
+            f" ({', '.join(lang for lang, _ in langs.most_common(3))})" if langs else "")]
+        hubs = [nodes[f]["label"] for f in sorted(files, key=lambda f: (-degree[f], f))[:5] if degree[f]]
+        if hubs:
+            parts.append("hubs: " + ", ".join(hubs))
+        titles = sorted({title for f in files for title in pages.get(f, [])})[:5]
+        if titles:
+            parts.append("knowledge: " + "; ".join(titles))
+        n["meta"] = {**(n.get("meta") or {}), "description": " · ".join(parts), "tags": []}
+        described += 1
+    return described
 
 
 def last2(rel: str) -> str:
@@ -88,7 +150,10 @@ def main() -> None:
             if len(parts) > dir_depth:
                 dkey = "/".join(parts[:dir_depth])
                 did = f"{layer}:dir:{dkey}"
-                add_node(did, label=dkey, layer=layer, kind="dir", path=dkey, abs="")
+                # A real path, so brain_context("Projects/x/server") resolves the folder
+                # and returns its generated overview instead of nothing.
+                add_node(did, label=dkey, layer=layer, kind="dir", path=dkey,
+                         abs=norm(base / (dkey[len(prefix):] if prefix else dkey)))
                 links.append({"source": did, "target": fid, "type": "contains"})
                 links.append({"source": project_id, "target": did, "type": "contains"})
             else:
@@ -130,6 +195,10 @@ def main() -> None:
                      path=c["path"], abs=norm(VAULT / c["path"]),
                      meta={"description": c.get("description", ""),
                            "tags": c.get("tags", []),
+                           # Hebrew/alternate names for recall. Deliberately not tags:
+                           # tags also create xlayer edges, aliases only affect search.
+                           "aliases": [c["aliases"]] if isinstance(c.get("aliases"), str)
+                           else list(c.get("aliases") or []),
                            "pageType": c.get("pageType", "")})
             links.append({"source": "vault:__root__", "target": vid, "type": "contains"})
             tags = {t.lower() for t in c.get("tags", [])}
@@ -171,6 +240,7 @@ def main() -> None:
 
     # drop links pointing at unknown nodes (safety)
     links = [e for e in links if e["source"] in nodes and e["target"] in nodes]
+    described = describe_directories(nodes, links)
 
     out = {
         "generatedAt": datetime.now(timezone.utc).isoformat(),
@@ -192,11 +262,13 @@ def main() -> None:
     index = [
         {"i": n["id"], "l": n["label"], "k": n["kind"], "p": n["path"],
          "d": (n.get("meta") or {}).get("description", ""),
-         "t": (n.get("meta") or {}).get("tags", [])}
-        for n in nodes.values() if n["kind"] in ("page", "file")
+         "t": (n.get("meta") or {}).get("tags", []),
+         **({"a": al} if (al := (n.get("meta") or {}).get("aliases")) else {})}
+        for n in nodes.values() if n["kind"] in ("page", "file", "dir")
     ]
     (ROOT / "data/brain.index.json").write_text(
         json.dumps(index, ensure_ascii=False), encoding="utf-8")
+    print(f"directories described: {described}")
     print(f"brain.json: {len(nodes)} nodes {len(links)} links "
           f"(kinds: {out['counts']}, xlayer: {xlayer_count})")
 

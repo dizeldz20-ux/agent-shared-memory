@@ -129,7 +129,7 @@ Clients with an installed `Stop` hook also get a one-retry memory gate: a sessio
 | `brain_neighbors(node_id, depth)` | Traverse a bounded blast-radius neighborhood. |
 | `brain_path(from_id, to_id)` | Find the shortest relationship path between two nodes. |
 | `memory_recent(limit, query)` | Read recent cross-agent implementation records. |
-| `memory_record(...)` | Append a structured handoff to local memory and, when configured, the vault. |
+| `memory_record(...)` | Append a structured handoff to local memory and, when configured, the vault. `supersedes=[ids]` retires earlier records from recall; credentials and card numbers are redacted mechanically. |
 
 For a client not handled by the installer, copy the `asm` entry from `~/.asm/client-configs/mcp.json`. The portable shape is:
 
@@ -153,10 +153,11 @@ For a client not handled by the installer, copy the `asm` entry from `~/.asm/cli
 ## Refresh the brain
 
 ```bash
-./refresh.sh
+./refresh.sh            # every source
+./refresh.sh --changed  # only sources with files newer than their last extract
 ```
 
-The refresh rebuilds the optional vault OKF graph, extracts each code source independently, merges the graph, atomically deploys runtime files, and hot-reloads the UI only if it is already running. It does not start the UI.
+The refresh rebuilds the optional vault OKF graph, extracts each code source independently, merges the graph, atomically deploys runtime files, and hot-reloads the UI only if it is already running. It does not start the UI. `--changed` makes a refresh cheap enough to run after every real change instead of once a week.
 
 PowerShell users can run `./refresh.ps1`. The POSIX integration installer currently provides the complete automatic multi-agent setup; Windows users can copy the portable MCP entry into their client configuration.
 
@@ -177,8 +178,10 @@ The server expects a production frontend in `frontend/dist`. Build it with `npm 
 ├── brain.json
 ├── brain.index.json
 ├── memory.jsonl
+├── usage.jsonl          # node opens (brain_node / brain_context) — recall feedback
 ├── events.jsonl
 ├── pending.jsonl
+├── sessions/            # per-session mutation markers and recall ledgers
 ├── asm-paths.json
 ├── mcp_server.py
 ├── client-configs/

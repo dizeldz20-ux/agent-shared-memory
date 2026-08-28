@@ -22,7 +22,9 @@ Use ASM as rung 0, before repository search or the first file read:
 | Inspect a graph or memory node | `brain_node(node_id)` |
 | Recover the latest agent handoff | `memory_recent(limit, query)` |
 
-When `brain_context.vault_pages` is non-empty, read the relevant vault page before editing.
+The prompt hook already lists matching nodes on every prompt (and will not repeat one it
+listed in the last six prompts of this session). When `brain_context.vault_pages` is
+non-empty, read the relevant vault page before editing.
 `shared_memory` contains newer agent records that may not have reached the rebuilt graph yet.
 If path resolution is ambiguous, retry with more path segments; never treat an ambiguous
 empty result as proof that no prior knowledge exists.
@@ -40,7 +42,8 @@ After a session changes files, call `memory_record` before finishing. Include:
 - affected files;
 - decisions and why they were made;
 - unresolved work for the next agent;
-- the current agent name.
+- the current agent name;
+- `supersedes`: ids of earlier records this one corrects or closes, so they leave recall.
 
 Never store secrets, credentials, private raw transcripts, or unverified claims. The tool
 writes an immediate append-only record and appends the session narrative to the Obsidian
@@ -49,8 +52,8 @@ page; the daily note is the narrative, not the canonical fact.
 
 ## Keep the graph true
 
-Run `refresh.sh` (`refresh.ps1` on Windows) after structural code changes or new durable
-vault pages. The live memory record is searchable immediately, while graph nodes are a
+Run `refresh.sh --changed` (`refresh.ps1` on Windows) after structural code changes or new
+durable vault pages; it re-extracts only the sources that changed. The live memory record is searchable immediately, while graph nodes are a
 snapshot and become current only after refresh. A session-start warning older than three
 days means the refresh automation is unhealthy.
 
