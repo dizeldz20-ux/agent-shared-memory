@@ -70,6 +70,43 @@ Engineering decisions and paid-for lessons, kept so the next person does not red
 - **In-memory history smaller than the disk fallback.** The live server's `recent` deque must be ≥ the MCP's disk-tail window, or a running server returns *less* history than a dead one.
 - **Non-atomic runtime deploy.** `Copy-Item -Force` truncates in place; a session starting inside that window got an MCP that could not parse `brain.json` and failed to boot. Deploy via tmp + `Move-Item`. The reload catch must also distinguish "server not running" from "server rejected the new graph".
 
+## Skill router (2026-09-03, after studying SKILL.state — arXiv:2608.26263)
+
+The paper replaces an append-only transcript with a small mutable state Σ that the runtime
+validates and patches each step (prompt O(1), run O(T) tokens, reasoning discarded after the
+patch). `hook/asm-skill-router.js` applies that to one recurring cost: choosing among ~200
+installed skills and loading each SKILL.md at most once per context window.
+
+- **P** — `~/.asm/skill-map.json`, derived from every SKILL.md frontmatter (`~/.claude/skills`,
+  `~/.claude/commands`, enabled plugin caches whose marketplace path exists on this machine,
+  `~/.agents/skills`) plus the private `skill-map.overrides.json`. Rebuilt by `--build`,
+  by `refresh.sh`, and by `SessionStart` when the roots or the overrides are newer than the map.
+- **Σ** — `~/.asm/sessions/<id>.skills.json`: `loaded`, `hinted`, `actions`, turn counters,
+  `compactions`. Patched with ⊕ (only sent keys change, `null` deletes) under a lock.
+  `SessionStart source=compact` deletes `loaded`/`hinted` (the context was rewritten, so
+  every SKILL.md is gone from it); `clear` deletes the file; an unparsable file starts empty.
+- **O** — the prompt (UserPromptSubmit) or the tool call (PreToolUse, matcher
+  `Skill|Write|Edit|MultiEdit|NotebookEdit|Bash`). A Skill call is recorded silently; a
+  Write/Edit/Bash is matched against `paths` globs and `commands` regexes and yields an
+  `additionalContext` hint when the skill is not loaded (cooldown 40 tool turns).
+- **Evidence** — strong = quoted phrases in the description, curated triggers, regex patterns
+  (one hit suffices); weak = tokens rare across all descriptions (df ≤ 3) and long enough
+  (≥ 6 Latin / ≥ 4 Hebrew letters), two hits needed — the recall hook's two-hit rule. Negative
+  sentences ("Do NOT use for Tranzila") are stripped from the evidence and shown as `NOT:`.
+  Hebrew single-word triggers match through clitic prefixes and common suffixes because `\b`
+  is ASCII-only. `defer_to` lets overlapping families collapse to one. Cut at three, cooled
+  for four prompts, "already loaded" repeated at most every six.
+- **Telemetry** — `~/.asm/skill-usage.jsonl` rows (`hint`, `action-hint`, `load` with
+  `hinted`/`reload`); `--report 7` gives precision, `noisy` (hinted ≥ 3, never loaded) and
+  `unpredicted` (loaded, never hinted) — the tuning loop for the overrides.
+- **Cost** — 30 ms per prompt after a containment prefilter (compiling ~6,000 boundary
+  regexes per prompt had cost 270 ms); a hint is 40–120 tokens on the minority of prompts
+  that match; a wrong or duplicate SKILL.md load is 200–22,000 tokens.
+- Claude only: the configurator registers the three events with `include_skill_router=True`
+  for `~/.claude/settings.json`; other clients keep the memory hooks alone. The curated rules
+  name private products and paths, so they live in the runtime, not in this repo
+  (`hook/skill-map.overrides.example.json` is the generic seed).
+
 ## Offline path
 
 - Hook POST fails → append to `~/.asm/pending.jsonl` (cap 2MB, newest-half kept).

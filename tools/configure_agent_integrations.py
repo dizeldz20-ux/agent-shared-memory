@@ -21,6 +21,14 @@ ASM_HOOK_FILES = {
     "asm-prompt-recall.js",
     "asm-activity-hook.js",
     "asm-memory-gate.js",
+    "asm-skill-router.js",
+}
+# The skill router speaks Claude Code's Skill tool and skill roots; other clients get
+# only the shared memory hooks. The PreToolUse matcher keeps it off Read/Grep/MCP calls.
+SKILL_ROUTER_EVENTS = {
+    "SessionStart": ("asm-skill-router.js", 10, None),
+    "UserPromptSubmit": ("asm-skill-router.js", 10, None),
+    "PreToolUse": ("asm-skill-router.js", 5, "Skill|Write|Edit|MultiEdit|NotebookEdit|Bash"),
 }
 KIMI_BLOCK_START = "# >>> ASM managed hooks >>>"
 KIMI_BLOCK_END = "# <<< ASM managed hooks <<<"
@@ -132,6 +140,7 @@ def merge_grouped_hooks(
     runtime: PurePath,
     events: tuple[str, ...] | None = None,
     include_async: bool = True,
+    include_skill_router: bool = False,
 ) -> None:
     commands = {
         "SessionStart": ("asm-session-start.js", 10, False),
@@ -159,6 +168,24 @@ def merge_grouped_hooks(
         if asynchronous and include_async:
             handler["async"] = True
         groups.append({"hooks": [handler]})
+    if not include_skill_router:
+        return
+    for event, (filename, timeout, matcher) in SKILL_ROUTER_EVENTS.items():
+        groups = hooks.setdefault(event, [])
+        if not isinstance(groups, list):
+            raise ConfigError(f"hooks.{event} must be a JSON object")
+        # The main loop above already stripped every managed handler for events it
+        # selected; events it did not select are cleaned here so a re-run stays idempotent.
+        if event not in selected:
+            groups[:] = _without_managed_grouped_handlers(groups)
+        group: dict[str, Any] = {"hooks": [{
+            "type": "command",
+            "command": hook_command(runtime, filename),
+            "timeout": timeout,
+        }]}
+        if matcher:
+            group = {"matcher": matcher, **group}
+        groups.append(group)
 
 
 def merge_cursor_hooks(document: dict[str, Any], runtime: Path) -> None:
@@ -255,7 +282,7 @@ def configure(home: Path, runtime: Path, uv_bin: str, include_legacy_kimi: bool 
     permissions[:] = [value for value in permissions if value != "mcp__c2b__*"]
     if "mcp__asm__*" not in permissions:
         permissions.append("mcp__asm__*")
-    merge_grouped_hooks(claude, runtime)
+    merge_grouped_hooks(claude, runtime, include_skill_router=True)
 
     # Claude's user-scoped MCP registry is JSON, so merge it atomically instead
     # of deleting a working registration before invoking `claude mcp add`.

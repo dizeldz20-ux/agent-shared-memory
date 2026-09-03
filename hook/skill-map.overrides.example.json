@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "$comment": "Copy to ~/.asm/skill-map.overrides.json and edit. Keys are skill ids as the Skill tool names them (globs allowed). Fields: triggers (strong phrases), weak (single tokens, two hits needed), patterns (regex on the prompt), paths (globs on Write/Edit file_path), commands (regex on Bash command), cwd (globs; requires_cwd makes cwd a precondition), not_for, reason, defer_to (drop when the named skill also matched), hint:false (never suggest), drop (remove auto-derived triggers). Then run: node ~/.asm/hooks/asm-skill-router.js --build",
+  "suppress": ["gsd-*", "hello-world-skill"],
+  "skills": {
+    "code-review": {
+      "triggers": ["review the diff", "code review"],
+      "commands": ["\\bgit\\s+commit\\b"],
+      "reason": "bug-hunting review of the diff before a commit"
+    },
+    "update-config": {
+      "paths": ["**/.claude/settings*.json"],
+      "triggers": ["settings.json", "add permission", "add a hook"],
+      "reason": "harness config: hooks, permissions, env"
+    },
+    "my-design-system": {
+      "cwd": ["**/Projects/my-product*"],
+      "requires_cwd": true,
+      "triggers": ["design system", "restyle", "component"],
+      "paths": ["**/Projects/my-product*/**/*.{tsx,css}"],
+      "reason": "product UI must use the company design system",
+      "not_for": "other projects"
+    },
+    "old-variant-skill": { "defer_to": ["new-variant-skill"] },
+    "internal-helper": { "hint": false }
+  }
+}

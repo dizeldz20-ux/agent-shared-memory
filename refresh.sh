@@ -83,7 +83,19 @@ done
 cp -f "$ASM/mcp_server.py" "$RUNTIME/"
 cp -f "$ASM/pyproject.toml" "$RUNTIME/" 2>/dev/null || true
 cp -f "$ASM/hook/asm-activity-hook.js" "$ASM/hook/asm-session-start.js" \
-      "$ASM/hook/asm-prompt-recall.js" "$ASM/hook/asm-memory-gate.js" "$HOOKS/"
+      "$ASM/hook/asm-prompt-recall.js" "$ASM/hook/asm-memory-gate.js" \
+      "$ASM/hook/asm-skill-router.js" "$HOOKS/"
+
+# Skill router: the curated routing rules are private runtime data (they name products and
+# paths), so the example is copied only when no rules exist yet, never over them. The map
+# is derived from every installed SKILL.md and rebuilt here because a refresh is exactly
+# when skills tend to have changed; SessionStart rebuilds it too when it goes stale.
+if [ ! -f "$RUNTIME/skill-map.overrides.json" ]; then
+  cp "$ASM/hook/skill-map.overrides.example.json" "$RUNTIME/skill-map.overrides.json"
+fi
+if command -v node >/dev/null 2>&1; then
+  node "$HOOKS/asm-skill-router.js" --build || echo "   !! skill map build failed — the router stays silent until it succeeds" >&2
+fi
 
 # Publish one cross-agent copy for Codex, Cursor, Kimi Code, and Grok Build, plus
 # Claude Code's client-specific compatibility copy. Avoid a duplicate under

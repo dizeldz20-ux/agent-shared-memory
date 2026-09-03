@@ -30,7 +30,7 @@ No hosted database or cloud memory service is required. The MCP server communica
 
 | Agent host | Shared MCP | Shared skill | Native live activity | Installer target |
 | --- | --- | --- | --- | --- |
-| Claude Code | Yes | Yes | Yes | user-scoped MCP and `~/.claude/settings.json` hooks |
+| Claude Code | Yes | Yes | Yes | user-scoped MCP and `~/.claude/settings.json` hooks, plus the skill router on `SessionStart`, `UserPromptSubmit`, and `PreToolUse` |
 | Codex | Yes | Yes | Yes | user-scoped MCP and `~/.codex/hooks.json` |
 | Cursor | Yes | Yes | Yes | `~/.cursor/mcp.json` and native user hooks |
 | Kimi Code | Yes | Yes | Yes | `~/.kimi-code/mcp.json` and managed TOML hooks |
@@ -179,9 +179,12 @@ The server expects a production frontend in `frontend/dist`. Build it with `npm 
 ├── brain.index.json
 ├── memory.jsonl
 ├── usage.jsonl          # node opens (brain_node / brain_context) — recall feedback
+├── skill-map.json       # derived skill routing map (rebuilt from every installed SKILL.md)
+├── skill-map.overrides.json  # your curated routing rules (private; seeded from hook/skill-map.overrides.example.json)
+├── skill-usage.jsonl    # skill hints and loads — routing precision feedback
 ├── events.jsonl
 ├── pending.jsonl
-├── sessions/            # per-session mutation markers and recall ledgers
+├── sessions/            # per-session mutation markers, recall ledgers, and skill state (<id>.skills.json)
 ├── asm-paths.json
 ├── mcp_server.py
 ├── client-configs/
@@ -190,7 +193,8 @@ The server expects a production frontend in `frontend/dist`. Build it with `npm 
     ├── asm-session-start.js
     ├── asm-prompt-recall.js
     ├── asm-activity-hook.js
-    └── asm-memory-gate.js
+    ├── asm-memory-gate.js
+    └── asm-skill-router.js   # Claude Code only: SKILL.state-style skill routing (see docs/implementation-notes.md)
 ```
 
 ## Privacy and security
