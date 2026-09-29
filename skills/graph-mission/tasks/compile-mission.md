@@ -48,7 +48,7 @@ Recall runs **before** decomposition and before any question to the user. A grap
 
 Walk the ladder in `context/operating-environment.md`:
 
-1. Use what is already in context: the "ASM recall" nodes the prompt hook listed, the skill-router hints, the SessionStart banner, the memory index. Open the relevant nodes with `mcp__asm__brain_node(node_id)`. A prompt that starts with `/` — `/graph-mission …` included — gets no prompt-hook recall and no router hints, so its recall starts at step 2.
+1. Use what is already in context: the "ASM recall" nodes the prompt hook listed, the skill-router hints, the SessionStart banner, the memory index. Open the relevant nodes with `mcp__asm__brain_node(node_id)`. A prompt that starts with `/` — `/graph-mission …` included — gets no prompt-hook recall and no router hints for that prompt; this step then holds only the SessionStart banner, the memory index and earlier prompts' hook output.
 2. Call `mcp__asm__brain_search(query=<subject>)`, and `mcp__asm__memory_recent(limit=5, query=<one or two distinctive words>)` for handoffs newer than the graph.
 3. Read the project's hub or memory page, then the memory files the mission touches. Add their constraints.
 4. For files the mission will edit, call `mcp__asm__brain_context(file_path=<path>)` and read the `vault_pages` it returns from disk. For a shared change, call `mcp__asm__brain_neighbors(node_id, depth)` for the blast radius — partial on a hub file, as the ladder says. On `node: null`, retry as the ladder says — more path segments, or the mapped checkout's absolute path — before concluding anything.
