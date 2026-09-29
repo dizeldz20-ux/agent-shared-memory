@@ -36,7 +36,7 @@ One outcome, stated as a result rather than an activity; one owner, its `role`: 
 - a dead end: a non-goal
 - an earlier decision: removes a `decide` node
 - a status claim ("not deployed", "the flag is X"): a `recon` node that checks live state before anything depends on it
-- an open thread the mission will finish: its id goes to the `write-back`, which closes it
+- an open thread the mission will finish: it goes to the `write-back`, which records it as finished — and closes it by id when `memory_record` accepts `resolves`
 
 An item that changes nothing did not need recalling. Records hold status snapshots that were never closed, and a graph built on one plans work already done, or skips work that never was.
 

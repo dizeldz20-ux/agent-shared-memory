@@ -24,6 +24,7 @@ mkdir -p ~/.agents/skills ~/.claude/skills
 cp -r skills/agent-shared-memory ~/.agents/skills/
 cp -r skills/agent-shared-memory ~/.claude/skills/
 cp -r skills/codex/graph-mission ~/.agents/skills/
+cp -r skills/graph-mission ~/.claude/skills/
 ```
 
 ```powershell
@@ -31,7 +32,12 @@ New-Item -ItemType Directory -Force "$env:USERPROFILE\.agents\skills", "$env:USE
 Copy-Item -Recurse skills/agent-shared-memory "$env:USERPROFILE\.agents\skills\"
 Copy-Item -Recurse skills/agent-shared-memory "$env:USERPROFILE\.claude\skills\"
 Copy-Item -Recurse skills/codex/graph-mission "$env:USERPROFILE\.agents\skills\"
+Copy-Item -Recurse skills/graph-mission "$env:USERPROFILE\.claude\skills\"
 ```
+
+The refresh installer places the Codex port only. The Claude Code edition, `skills/graph-mission`, is
+copied by hand as above, because its routing reads `~/.claude/skills/graph-mission/` — and then
+customized (next section).
 
 `agent-shared-memory` activates on context (any brain mention, any session primer). `graph-mission` also
 takes an explicit `/graph-mission` invocation.

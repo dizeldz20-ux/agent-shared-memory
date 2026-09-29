@@ -48,10 +48,10 @@ Recall runs **before** decomposition and before any question to the user. A grap
 
 Walk the ladder in `context/operating-environment.md`:
 
-1. Use what is already in context: the "ASM recall" nodes the prompt hook listed, the skill-router hints, the SessionStart banner, the memory index. Open the relevant nodes with `mcp__asm__brain_node`.
-2. Call `mcp__asm__brain_search(<subject>)`, and `mcp__asm__memory_recent(limit=5, query=<subject>)` for handoffs newer than the graph.
+1. Use what is already in context: the "ASM recall" nodes the prompt hook listed, the skill-router hints, the SessionStart banner, the memory index. Open the relevant nodes with `mcp__asm__brain_node(node_id)`. A prompt that starts with `/` — `/graph-mission …` included — gets no prompt-hook recall and no router hints, so its recall starts at step 2.
+2. Call `mcp__asm__brain_search(query=<subject>)`, and `mcp__asm__memory_recent(limit=5, query=<one or two distinctive words>)` for handoffs newer than the graph.
 3. Read the project's hub or memory page, then the memory files the mission touches. Add their constraints.
-4. For files the mission will edit, call `mcp__asm__brain_context(<path>)` and read the `vault_pages` it returns from disk. For a shared change, call `mcp__asm__brain_neighbors` for the blast radius. On `node: null`, retry with more path segments before concluding anything.
+4. For files the mission will edit, call `mcp__asm__brain_context(file_path=<path>)` and read the `vault_pages` it returns from disk. For a shared change, call `mcp__asm__brain_neighbors(node_id, depth)` for the blast radius — partial on a hub file, as the ladder says. On `node: null`, retry as the ladder says — more path segments, or the mapped checkout's absolute path — before concluding anything.
 5. The disk last — grep, find, Read — for what the rungs above did not answer.
 
 Note the open threads this mission will finish, so the write-back can record them as finished. If your ASM version numbers threads, `memory_recent` lists them as `<record-id>#<n>` — note those ids, so the write-back can close them.

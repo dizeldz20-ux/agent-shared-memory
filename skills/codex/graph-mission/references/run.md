@@ -23,7 +23,7 @@ A child prompt holds exactly these, and nothing else:
 1. Role, and the lens it holds
 2. Goal: the node's `action`, singular
 3. Recall pack: the sourced facts this node needs
-4. Recall duty, for nodes that edit: `brain_context` on each file before editing it, and read the `vault_pages` it returns
+4. Recall duty, for nodes that edit: `brain_context(file_path)` on each file before editing it, and read the `vault_pages` it returns
 5. Paths: its write scope and the files it needs, not the repo. A `build` leaves its changes uncommitted unless it works on its own branch
 6. Non-goals and authority: the SKILL.md authority list pasted in full, none of it allowed to the child, and no spawning of its own agents
 7. Locks: each lock it holds and its rule (`test-runner`: targeted tests, one run at a time; stop any service it starts)

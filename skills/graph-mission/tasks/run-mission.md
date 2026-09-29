@@ -10,6 +10,7 @@ As the user, I want the compiled graph actually executed with independent lanes 
 - Immediately after `compile-mission` produced a brief in run mode
 - `/graph-mission run` with a brief compiled in this session
 - `/graph-mission resume`, or any session that finds an interrupted mission — a run file with no `closed_at`
+- A gate that got its word after close-out — the user names the closed run file
 </when-to-use>
 
 <context>
@@ -30,7 +31,7 @@ Use its run file.
 </if>
 
 <if condition="resuming">
-Find the run file: the one the user named, or the one under `.claude/graph-runs/` with no `closed_at` whose `worktree` is exactly this tree and whose `objective` is this task. Never take the newest file blindly — a run file committed by mistake travels into every worktree cut after it, and another mission's file can be newer.
+Find the run file: the one the user named — even a closed one, when a gate got its word after close-out; reopen it as `write_back` says — or the one under `.claude/graph-runs/` with no `closed_at` whose `worktree` is exactly this tree and whose `objective` is this task. Never take the newest file blindly — a run file committed by mistake travels into every worktree cut after it, and another mission's file can be newer.
 
 With zero or several candidates, list them to the user and **wait for their answer.**
 
@@ -61,7 +62,7 @@ Each subagent prompt contains exactly these, and nothing else:
 1. **Role** — the agent type and the perspective it holds
 2. **Goal** — the node's `action`, imperative and singular
 3. **Recall pack** — the relevant sourced facts, so it does not rediscover what we know
-4. **Recall duty**, for nodes that edit — call `mcp__asm__brain_context` on each file before editing it, and read the `vault_pages` it returns
+4. **Recall duty**, for nodes that edit — call `mcp__asm__brain_context(file_path)` on each file before editing it, and read the `vault_pages` it returns
 5. **Paths** — its write scope and the files it needs, not the repo. A `build` leaves its changes uncommitted, unless it works on an isolated branch
 6. **Non-goals and authority** — what it must not touch, and the Authority list from the environment doc, pasted in full: none of it is allowed to the subagent
 7. **Locks** — what it holds and the rule that comes with each (`test-runner`: targeted files, a low worker count such as `--maxWorkers=1`, under `nice` where the OS has it; stop any service it starts)
@@ -122,14 +123,14 @@ This is the step that makes the mission survive compaction. The file must be tru
 </step>
 
 <step name="write_back">
-Run the `write-back` node as `self`, with no verifier, when the rest of the graph is terminal or `blocked` — a gate still waiting does not hold the record back.
+Run the `write-back` node as `self`, with no verifier, when every other node is terminal, `blocked`, or `pending` behind a `blocked` node — a gate still waiting does not hold the record back.
 
-1. **Record.** Call `mcp__asm__memory_record` with the `session_id` the ASM memory gate names (in Claude Code, the UUID in this session's scratchpad path), a one-line `summary`, verified results in `details`, `files`, `decisions`, `open_threads` (every `blocked` gate among them), and `supersedes` for earlier records of this mission, such as one the memory gate forced mid-run. If your ASM version's `memory_record` accepts `resolves`, add the ids of the threads this mission finished (`<record-id>#<n>`, noted during recall), a record id to close all its threads, or `vault:<id>` for a plan page now done. If it does not, quote the finished threads in `details`; `supersedes` retires a whole record from recall, so name another session's record there only when this record replaces all of it.
-2. **Durable knowledge → a vault page** under `wiki/main/`, following the vault's own conventions: frontmatter `id`, `pageType` (entity, concept, synthesis, source, architecture or report), a one-sentence `description`, `tags`, `related` (existing page ids only), `aliases`, `updatedAt`. Never hand-edit the generated `okf/` bundle or a generated index. A page that revises another lists the old id in `contradictions`.
+1. **Record.** Call `mcp__asm__memory_record` with the `session_id` the ASM memory gate names (in Claude Code, the UUID in this session's scratchpad path), a one-line `summary`, verified results in `details`, `files`, `decisions`, `open_threads` (every `blocked` gate among them), and `supersedes` for earlier records of this mission, such as one the memory gate forced mid-run. If your ASM version's `memory_record` accepts `resolves`, add the ids of the threads this mission finished (`<record-id>#<n>`, noted during recall; `<n>` counts from 0), a record id to close all its threads, or `vault:<id>` for a plan page now done — a page already in the graph. If it does not, quote the finished threads in `details`. Read the answer's `ignored_supersedes`, and `ignored_resolves` where your version returns it: an id listed there changed nothing. `supersedes` retires a whole record from recall for every session, so naming another session's record there is an irreversible operation on something the mission did not create — it waits for the user's word.
+2. **Durable knowledge → a vault page** under `wiki/main/`, following the vault's own conventions: frontmatter `id`, `pageType` (entity, concept, synthesis, source, architecture or report), a one-sentence `description`, `tags`, `related` (existing page ids only), `aliases`, `updatedAt` — and `resource`, a mapped path, when the page is about a file: that is what links the page to the file in `brain_context`. Never hand-edit the generated `okf/` bundle or a generated index. A page that revises another lists the old id in `contradictions`.
 3. **A rule for future sessions → a memory file plus one line** — in the project's hub or memory page; in the memory index only for a standing rule or a tool trap any session can hit.
-4. **Recall that proved wrong is corrected, not just avoided.** If your ASM version's `memory_record` accepts `corrects`, file each stale claim there instead of editing it yourself — `{"target": "vault:<id>" | "mem:<file>" | "idx:<index>:<file>", "claimed": …, "truth": …, "evidence": […]}` — and that version's curator applies it after the user reviews it (in `/asm-review`, if your version ships that command). Otherwise fix the stale line and put "claimed X, true Y, evidence Z" in the record's `details`.
+4. **Recall that proved wrong is corrected, not just avoided.** If your ASM version's `memory_record` accepts `corrects`, file each stale claim there — `{"target": "vault:<id>" | "mem:<file>" | "idx:<index>:<file>", "claimed": …, "truth": …, "evidence": […]}` — and read `ignored_corrects` in the answer. A curator job, where one is deployed, turns the requested corrections into proposals the user reviews (in `/asm-review`, if your version ships that command), so leave the line to it. Where none is deployed, they wait in the ledger, so also fix the stale line yourself. Without `corrects`, fix the stale line and put "claimed X, true Y, evidence Z" in the record's `details`.
 
-When a gate gets its word after the record, write a new record that supersedes it.
+When a gate gets its word after the record, write a new record that supersedes it. When the word comes after close-out, reopen the run file (clear `closed_at`), run the gate as usual, then write a new record that supersedes the close-out record, and close out again.
 </step>
 
 <step name="close_out" priority="last">
@@ -154,7 +155,7 @@ Completed work (code, docs, decisions) plus a run file with `closed_at`, in whic
 </output>
 
 <acceptance-criteria>
-- [ ] Resumed only an unclosed run file tied to this mission, with legacy statuses mapped and in-flight nodes reconciled
+- [ ] Resumed only an unclosed run file tied to this mission, or the file the user named, with legacy statuses mapped and in-flight nodes reconciled
 - [ ] Every node was set `running` before its dispatch and got its `agent_id` right after; never more than `max_subagents` ran at once
 - [ ] Each subagent prompt carried the nine parts, the Authority list pasted in full, and no conversation dump
 - [ ] No two running nodes shared a path or a lock

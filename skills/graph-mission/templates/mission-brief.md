@@ -134,7 +134,7 @@ The JSON above is the example for every field.
 | `schema_version` | number | Yes | `2`. A file without it is version 1 — read it with the legacy mapping |
 | `mission` | string | Yes | Kebab-case slug; also the filename suffix |
 | `resume_with` | string | Yes | Where the instructions live, for a session that lost the skill to compaction |
-| `created_at`, `closed_at` | string | Yes | ISO time; `closed_at` stays `null` until close-out, and resume skips closed files |
+| `created_at`, `closed_at` | string | Yes | ISO time; `closed_at` stays `null` until close-out, and resume skips closed files unless the user names one — a gate that gets its word after close-out reopens its file |
 | `session_id` | string | Yes | `null` when unknown |
 | `worktree`, `branch`, `base_commit` | string | Yes | `null` until the tree exists; how resume matches a file is in `tasks/run-mission.md` |
 | `objective` | string | Yes | One sentence |

@@ -13,7 +13,7 @@ An item that does not apply to the node (no UI, no LLM call, no tests) is marked
 
 ## Provenance
 - [ ] Every claim carries a source from the vocabulary in `templates/mission-brief.md`; `vault:` only for a page whose body was read
-- [ ] Recalled state (deployed, pending, a flag, a commit) was re-checked against live state — a record, a hub line or a dated-worktree node is a snapshot, not a live fact
+- [ ] Recalled state (deployed, pending, a flag, a commit) was re-checked against live state — a record, a hub line or a graph node is a snapshot, not a live fact
 - [ ] No claim rests on "the worker said so"
 
 ## Side Effects

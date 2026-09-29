@@ -49,7 +49,7 @@ A step that is an improvement loop also carries `"loop": {"metric": "target", "g
 
 - `mission`: kebab-case slug, also the filename suffix. `resume_with`: where the instructions live, for a session that lost the skill to compaction.
 - `created_at`, `closed_at`: UTC ISO time. `closed_at` stays `null` until close-out; resume skips closed files unless the user names one.
-- `session_id`: the id the ASM memory gate names, or Codex's thread id (`$CODEX_THREAD_ID` in its shells); `null` when unknown. `worktree`, `branch`, `base_commit`: `null` until the tree exists.
+- `session_id`: the session id the ASM memory gate names — in Codex the thread id (`$CODEX_THREAD_ID`); a descriptive id only when the client runs no ASM hooks. `worktree`, `branch`, `base_commit`: `null` until the tree exists.
 - `authority.needs_user`: every item is a `gate` step. `non_goals`: never empty. `budget.max_subagents`: child agents running at once, verifiers included; at most 3 in Codex. `recall`: up to 8 sourced facts.
 - `steps[].kind`: one of the seven in [decomposition.md](decomposition.md). `role`: `main` for the primary agent, otherwise the role the child is spawned with. `paths`: write scope, empty for read-only nodes. `locks`: from decomposition.md. `success`: concrete enough to fail.
 - `evidence`: required for `verified`. `reason`: required for `failed`, `reverted`, `skipped` and `blocked`; says why, and whether the node's changes are still in the tree. `rounds`: revise cycles, re-verification rounds or loop trials used so far.

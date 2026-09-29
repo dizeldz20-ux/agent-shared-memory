@@ -50,7 +50,7 @@ A mission never widens authority. These wait for the user's explicit word, and e
 - spending money
 - using a credential: reading, copying or passing a secret, or signing in to an outside service as the user. Running an app with the keys it already has is not
 - anything that drives the user's screen, mouse or keyboard
-- changing a runtime every session shares: ASM's runtime, global hooks, agent client configuration, scheduled jobs. Data written through ASM's own tools is not
+- changing a runtime every session shares: ASM's runtime, global hooks, agent client configuration, scheduled jobs. Data written through ASM's own tools is not. `refresh.sh` redeploys that runtime and follows the rule in [knowledge-loop.md](references/knowledge-loop.md)
 - a destructive or irreversible operation on anything the mission did not create
 
 A request in the prompt ("…and deploy it") is intent, not the word, and the word covers one action. A sandbox approval prompt is not the word either: ask first, with the evidence.
