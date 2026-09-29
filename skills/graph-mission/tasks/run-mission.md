@@ -1,15 +1,15 @@
 <purpose>
-Execute a compiled mission graph: dispatch ready nodes to subagents, gate every result through the evidence checklist, ratchet only measurable improvements, and close out by writing durable knowledge back to the vault and memory. Also resumes an interrupted mission from its run file.
+Execute a compiled mission graph: dispatch the ready frontier, hold at gates for the user's word, check every result through the evidence gate, send defects back for revision, ratchet only measurable improvements, and close out by writing the outcome back to ASM, the vault and memory. Also resumes an interrupted mission from its run file.
 </purpose>
 
 <user-story>
-As the user, I want the compiled graph actually executed with independent lanes running in parallel and every claimed result verified before it counts, so that I get a finished mission with proof attached instead of a fluent summary of work that may not have happened.
+As the user, I want the compiled graph actually executed with independent lanes running in parallel and every claimed result verified before it counts, so that I get a finished mission with proof attached — and every production step waiting for my word — instead of a fluent summary of work that may not have happened.
 </user-story>
 
 <when-to-use>
-- Immediately after `compile-mission` produced a brief
-- `/graph-mission run` with an existing brief
-- Resuming after a context reset, compaction, or crash — a run file exists with pending nodes
+- Immediately after `compile-mission` produced a brief in run mode
+- `/graph-mission run` with a brief compiled in this session
+- `/graph-mission resume`, or any session that finds an interrupted mission — a run file with no `closed_at`
 </when-to-use>
 
 <context>
@@ -17,111 +17,153 @@ As the user, I want the compiled graph actually executed with independent lanes 
 </context>
 
 <references>
-`~/.claude/skills/graph-mission/checklists/evidence-gate.md` (at every evaluator node, before marking anything kept)
+`~/.claude/skills/graph-mission/checklists/evidence-gate.md` (whenever a returned node is checked)
+`~/.claude/skills/graph-mission/templates/mission-brief.md` (for the schema, the statuses, the legacy mapping and the budget)
 `~/.claude/skills/graph-mission/frameworks/graph-engineering.md` (when a lane stalls and the architecture level looks wrong)
 </references>
 
 <steps>
 
 <step name="load_or_resume" priority="first">
-If a brief was just compiled in this session, use it.
+<if condition="a brief was compiled in this session">
+Use its run file.
+</if>
 
-Otherwise resume: list `.claude/graph-runs/` and read the most recent run file, or the one the user named. Report in one line what it says — objective, which nodes are terminal, which are still `pending` — then continue from the pending frontier.
+<if condition="resuming">
+Find the run file: the one the user named, or the one under `.claude/graph-runs/` with no `closed_at` whose `worktree` is exactly this tree and whose `objective` is this task. Never take the newest file blindly — a run file committed by mistake travels into every worktree cut after it, and another mission's file can be newer.
 
-**Never trust a `kept` status without its evidence field.** A node marked kept with no evidence attached was interrupted mid-write; treat it as pending.
+With zero or several candidates, list them to the user and **wait for their answer.**
+
+Then reconcile the file with the tree, in this order:
+1. Map legacy fields and statuses per the template. A version 1 step has no `kind` — assign `kind` and `locks` before anything else, so a deploy step becomes a `gate`.
+2. A `running` node whose `dispatched_session` is this session: wait for its agent's notification. Otherwise look for its work — its `paths` in `git status`, its `branch` in `git worktree list`. No work → `pending`. Work found → apply the Side Effects section against its `action`: passes → `kept`; fails → `failed` with the reason "partial changes in tree".
+3. A `kept` node with no evidence → `pending`, unless a node that depends on it is `kept` with evidence; then keep it, with evidence `"inferred: dependent <id> kept"`.
+
+Report in one line: objective, terminal nodes, and the frontier.
+</if>
 </step>
 
 <step name="dispatch_ready_nodes">
-Compute the frontier: every node whose `depends_on` are all terminal and verified. Dispatch the whole frontier in **one message**, one `Agent` call per node, so they run concurrently.
+Compute the frontier:
+- every `pending` node whose dependencies are all satisfied (`kept` or `skipped`)
+- minus any node whose path or lock a `running` node holds
+- when frontier nodes share a path or lock, one holder at a time — the node on the critical path, otherwise the lowest id
+
+Route what is left:
+- a `gate` → `hold_at_gates`
+- a `self` node → run it inline, after the subagent dispatches
+- any other node → an `Agent` call
+
+Dispatch up to `max_subagents` in **one message**, and the rest as slots free. Just before each call, write the node's `status: running`, `dispatched_at` and `dispatched_session` to the run file; as soon as the call returns, add its `agent_id`. A mission that compacts mid-wave must not dispatch the same node twice.
 
 Each subagent prompt contains exactly these, and nothing else:
 
-1. **Role** — the agent type from the environment doc, and what perspective it holds
+1. **Role** — the agent type and the perspective it holds
 2. **Goal** — the node's `action`, imperative and singular
-3. **Recall pack** — the relevant bullets from the brief, so it does not rediscover what we know
-4. **Paths** — the specific files it needs, not the repo
-5. **Non-goals** — what it must not touch
-6. **Success** — the node's criterion, verbatim
-7. **Output format** — what to return, and whether edits are allowed
+3. **Recall pack** — the relevant sourced facts, so it does not rediscover what we know
+4. **Recall duty**, for nodes that edit — call `mcp__asm__brain_context` on each file before editing it, and read the `vault_pages` it returns
+5. **Paths** — its write scope and the files it needs, not the repo. A `build` leaves its changes uncommitted, unless it works on an isolated branch
+6. **Non-goals and authority** — what it must not touch, and the Authority list from the environment doc, pasted in full: none of it is allowed to the subagent
+7. **Locks** — what it holds and the rule that comes with each (`test-runner`: targeted files, a low worker count such as `--maxWorkers=1`, under `nice` where the OS has it; stop any service it starts)
+8. **Success** — the node's criterion, verbatim
+9. **Output format** — findings with sources, files changed, commands run with their output, open risks
 
-Do not paste the conversation history. Each worker gets its own subgraph, not the whole run. Context dumping is what makes fan-out expensive without making it better.
+Do not paste the conversation history. Each worker gets its own subgraph, not the whole run.
 
-**Concurrency discipline:** two nodes that write the same file are not independent. Serialize them, or give one of them an isolated worktree. Respect `max_subagents` from the budget.
+A node that could write the same files as another gets `isolation: "worktree"`. Before dispatching it, make sure the graph merges its branch in a `self` `reduce` and runs the full-suite `verify` after that merge — add whatever is missing to the run file — and record the `branch` it returns.
 
-If the user explicitly opted into orchestration, the `Workflow` tool is available for the fan-out instead. Without that opt-in, dispatch with `Agent` and, if the mission is large enough to warrant it, mention in the report that a workflow was an option.
+A node waiting on something outside the mission — another session's work, a service that is down — is `blocked` with the `reason`. Re-check it every wave, and set it back to `pending` when the dependency is there.
+
+When the mission creates the tree it edits, move the run file into that tree's `.claude/graph-runs/`, exclude it from git there, and set `worktree`.
+
+If the user explicitly opted into orchestration ("use a workflow"), `Workflow` may run the fan-out instead of `Agent`.
+</step>
+
+<step name="hold_at_gates">
+When a `gate` node reaches the frontier, set it `blocked` and do not perform its action.
+
+1. Tell the user in one line what the gate needs: the action, what it touches, and the evidence that the nodes before it are `kept`. A gate that is a choice is asked with `AskUserQuestion`.
+2. Keep dispatching every lane that does not depend on the gate.
+
+**Wait for the user's explicit word**, as the environment doc's Authority section defines it.
+
+On the word, run the action as `self` and observe its effect on the live path — a health check, `git ls-remote`, a delivery receipt — never by running the action again. Mark the gate `kept` with that evidence. The word covers that action only: not the next gate, and not a retry with different parameters.
 </step>
 
 <step name="gate_every_result">
-No worker output merges into the graph unverified. For each returned node:
+No returned node merges unverified. Read `~/.claude/skills/graph-mission/checklists/evidence-gate.md` and apply the sections it names for the node's kind. **Verify side effects yourself** — read the file, run the command. A worker's report is a lead, never proof.
 
-1. Read `~/.claude/skills/graph-mission/checklists/evidence-gate.md` and apply it.
-2. **Verify side effects yourself.** A worker saying it wrote a file, ran a test, or fixed a bug is a self-report. Read the file. Run the command. A self-report is never proof.
-3. For anything non-trivial, dispatch an evaluator with a **different agent type and different evidence** than the generator — the table in the environment doc names which. An evaluator that shares the generator's prompt shares its blind spots and then confirms them.
-4. The evaluator returns criterion-level defects — "the test at path:line still fails", "the claim has no source" — or it returns nothing. "Looks good" is not an output; send it back.
+- **`build`** — once its side effects are confirmed, mark it `kept`: "built as claimed". Whether it is right is its `verify`'s call.
+- **`verify`** — first check the verifier's own report against Provenance and Side Effects. A report that fails — a claimed run that does not reproduce, a finding with no source — is the verifier's defect, not the builder's: dispatch a fresh verifier and add one to the verify's `rounds`. Then act on the findings:
+  1. No defects → `kept`.
+  2. Defects in one build's work → send them back to that builder (`SendMessage` to the same agent, or a new attempt), set the `build` back to `running` with one more round, and set the `verify` back to `pending`, so the frontier dispatches it again once the build is `kept`.
+  3. Defects in integrated work → add each as a new `build` on the integration branch, and set the `verify` back to `pending`, so it runs again once they are `kept`.
+- **`recon`** — append its sourced findings to `claims`.
 
-Mark the node `kept` only with its evidence attached. Otherwise `reverted` or `crash`, with the reason logged.
+A node becomes `failed` right away when Provenance, Side Effects or Authority fails in its own work, or when its `rounds` reach `max_rounds`. A `verify` that ends `failed` because of defects fails the builds those defects belong to. A `failed` node's `reason` says what failed and whether its changes are still in the tree. Before a full-suite `verify` runs, a failed build's changes in a shared tree are saved as a patch outside the tree — the session's scratchpad, if it has one — and removed; that build becomes `reverted`, with the patch path in its `reason`.
+
+A node that is no longer needed becomes `skipped` with its `reason`, and so does any node that cannot run without it.
 </step>
 
 <step name="ratchet">
-For loop-shaped nodes, keep only measurable improvements.
+For a node with a `loop` field, keep only measurable improvements.
 
-- Improved on the target metric and no guardrail regressed → `kept`
-- No improvement → `reverted`, logged
-- Crashed → `reverted`, logged
+1. Record each trial in `loop.trials`: parent state, the change, the score on `loop.metric`, the guardrails, and keep or discard. Each trial adds one to `rounds`.
+2. Discard a trial that did not improve the metric, or that regressed a guardrail — cost, latency, existing tests — and remove only that trial's own changes.
+3. Stop when `rounds` reach `max_rounds`, not when the metric feels good enough.
 
-Each trial records parent state, the change, the score, and the keep/discard decision. Watch the guardrails alongside the target — cost, latency, existing tests — because a ratchet optimizes exactly the metric it can see and will happily trade away the ones it cannot.
-
-Stop when the budget's `max_rounds` is spent, not when the metric feels good enough.
+The node is `kept` when its best trial improved the metric with every guardrail intact. It is `reverted` only when every trial was discarded.
 </step>
 
 <step name="update_lineage">
-After every wave, update the run file: node statuses, evidence, decisions. Update the `TodoWrite` list to match.
+After every result, update the run file: statuses, evidence, `reason`, `rounds`, decisions and open threads. Update the tracker to match.
 
-This is the step that makes the mission survive compaction. If the session dies here, the next one resumes from the file — so the file must be true at all times, not written once at the end.
+This is the step that makes the mission survive compaction. The file must be true at all times, not written once at the end.
 </step>
 
 <step name="write_back">
-Before reporting done, close the knowledge loop.
+Run the `write-back` node as `self`, with no verifier, when the rest of the graph is terminal or `blocked` — a gate still waiting does not hold the record back.
 
-1. Did this mission learn something durable — a bug pattern, a runtime or setup detail, an architecture decision, a gotcha, a status change? → write the vault page **this session**. It becomes a brain node on the next refresh, so the next session inherits it.
-2. Does it change how future sessions must work? → write or update the memory topic file, and add exactly one pointer line to the index. Content goes in the topic file, never in the index.
-3. Does it revise an earlier vault page? → record the superseded page id in `contradictions` rather than overwriting it.
+1. **Record.** Call `mcp__asm__memory_record` with the `session_id` the ASM memory gate names (in Claude Code, the UUID in this session's scratchpad path), a one-line `summary`, verified results in `details`, `files`, `decisions`, `open_threads` (every `blocked` gate among them), and `supersedes` for earlier records of this mission, such as one the memory gate forced mid-run. If your ASM version's `memory_record` accepts `resolves`, add the ids of the threads this mission finished (`<record-id>#<n>`, noted during recall), a record id to close all its threads, or `vault:<id>` for a plan page now done. If it does not, quote the finished threads in `details`; `supersedes` retires a whole record from recall, so name another session's record there only when this record replaces all of it.
+2. **Durable knowledge → a vault page** under `wiki/main/`, following the vault's own conventions: frontmatter `id`, `pageType` (entity, concept, synthesis, source, architecture or report), a one-sentence `description`, `tags`, `related` (existing page ids only), `aliases`, `updatedAt`. Never hand-edit the generated `okf/` bundle or a generated index. A page that revises another lists the old id in `contradictions`.
+3. **A rule for future sessions → a memory file plus one line** — in the project's hub or memory page; in the memory index only for a standing rule or a tool trap any session can hit.
+4. **Recall that proved wrong is corrected, not just avoided.** If your ASM version's `memory_record` accepts `corrects`, file each stale claim there instead of editing it yourself — `{"target": "vault:<id>" | "mem:<file>" | "idx:<index>:<file>", "claimed": …, "truth": …, "evidence": […]}` — and that version's curator applies it after the user reviews it (in `/asm-review`, if your version ships that command). Otherwise fix the stale line and put "claimed X, true Y, evidence Z" in the record's `details`.
 
-A mission that discovered a trap and did not record it will cost the same discovery again.
+When a gate gets its word after the record, write a new record that supersedes it.
 </step>
 
 <step name="close_out" priority="last">
-Report in this order:
+Stop every service the mission started, and write `closed_at` to the run file. Then report to the user in their language, in this order:
 
-1. **What changed** — files, behavior, decisions
-2. **What was verified, and how** — the evidence, named: the command and its result, the file and line, the page that rendered
-3. **What is blocked** — with the reason and who unblocks it
-4. **Cost** — rounds, subagents dispatched
-5. **Next step** — one concrete thing
+1. **What they do now** — the gates and decisions waiting for them, or that nothing is
+2. **What works, and how to check it** — the command and its result, the page that renders
+3. **What is blocked or failed** — with the reason and who unblocks it
+4. **Cost** — the `rounds` spent and the subagents dispatched
 
-If the budget ran out mid-run, return the best current artifact plus the unresolved nodes plus the stop reason. Never let a fluent summary paper over a partial failure — a graph with `pending` nodes is reported as a graph with pending nodes.
+A graph with `blocked`, `failed` or never-started `pending` nodes is reported as exactly that. Never let a fluent summary paper over a partial failure.
 </step>
 
 </steps>
 
 <output>
 ## Artifact
-Completed work (code, docs, decisions) plus a run file where every node holds a terminal status and every `kept` node holds evidence.
+Completed work (code, docs, decisions) plus a run file with `closed_at`, in which every node is terminal, `blocked`, or `pending` because it never started, and every `kept` node holds evidence.
 
 ## Location
-`.claude/graph-runs/<UTC-timestamp>.json`, updated in place through the run.
+`.claude/graph-runs/{utc-timestamp}-{mission-slug}.json`, updated in place through the run.
 </output>
 
 <acceptance-criteria>
-- [ ] Frontier nodes dispatched in a single message, concurrently
-- [ ] Each subagent prompt carried role, goal, recall pack, paths, non-goals, success criterion, output format — and no conversation dump
-- [ ] No two concurrent nodes wrote the same file
-- [ ] Every side-effect claim verified directly with Read or Bash, not accepted as a self-report
-- [ ] Evaluators used a different agent type and different evidence than their generators
-- [ ] Every `kept` node has evidence attached; every non-kept node has a logged reason
-- [ ] Run file and todos reflect true state after every wave
-- [ ] Durable knowledge written to the vault, memory updated if it changes future sessions
-- [ ] Close-out reported what changed, what was verified, what is blocked, cost, next step
+- [ ] Resumed only an unclosed run file tied to this mission, with legacy statuses mapped and in-flight nodes reconciled
+- [ ] Every node was set `running` before its dispatch and got its `agent_id` right after; never more than `max_subagents` ran at once
+- [ ] Each subagent prompt carried the nine parts, the Authority list pasted in full, and no conversation dump
+- [ ] No two running nodes shared a path or a lock
+- [ ] Every gate waited for the user's word; its effect was observed, never re-run
+- [ ] Every `kept` node passed the sections of `checklists/evidence-gate.md` for its kind; every `failed`, `reverted` or `skipped` node has a `reason`
+- [ ] Run file and tracker true after every result
+- [ ] Write-back done, including open gates as open threads
+- [ ] Services started by the mission are stopped, and `closed_at` is written
+- [ ] The close-out reached the user in the order above
 </acceptance-criteria>
 
 ---

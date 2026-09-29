@@ -7,8 +7,8 @@ code is read, on every session, without anyone remembering to ask.
 | Skill | What it does |
 |---|---|
 | [`agent-shared-memory`](agent-shared-memory/) | The recall protocol: which brain tool to call when, how to read `vault_pages`, how to keep the graph from going stale, and the traps that cost real time to find. |
-| [`graph-mission`](graph-mission/) | Compiles a complex or vague request into a typed mission graph **before** touching code — recall first (brain → memory → vault → code graph → grep), explicit non-goals, subagent dispatch, an evidence gate that rejects self-reports, and a run file that survives context compaction. |
-| [`codex/graph-mission`](codex/graph-mission/) | Codex-native port of the protocol: ASM and `memory_recent` recall, Codex planning/commentary, at most three child agents beside the primary agent, shared-filesystem write isolation, `.codex/graph-runs/` lineage, and proportional direct verification. |
+| [`graph-mission`](graph-mission/) | Compiles a complex or vague request into a typed mission graph **before** touching code — recall first (brain → memory → vault → disk, with the graphify code graph inside the brain), goal-backward decomposition into seven node kinds with locks and gates for the user's authority, subagent dispatch, a revise loop behind an evidence gate that rejects self-reports, and a resumable run file that survives context compaction. Plan requests stop after the brief. |
+| [`codex/graph-mission`](codex/graph-mission/) | Codex-native port of the same protocol: ASM and `memory_recent` recall, the same decomposition, gates and revise loop, Codex planning/commentary, at most three child agents beside the primary agent, shared-filesystem write isolation, and `.codex/graph-runs/` lineage. |
 
 The two are designed together: `graph-mission` names the brain as **rung 0** of its recall
 order, so every compiled mission starts from what is already known instead of rediscovering it.

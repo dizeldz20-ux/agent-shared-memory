@@ -1,43 +1,53 @@
 # ASM, the vault, and the mission graph
 
-Read this at the start of every graph mission. Four different kinds of state cooperate, but they are not interchangeable.
+Read this at the start of every mission. Four kinds of state cooperate; none replaces another.
 
-| Layer | Purpose | Freshness |
+| Layer | Holds | Freshness |
 |---|---|---|
-| ASM brain graph | Joins mapped code, vault pages, relationships, and discoverable memories | Snapshot rebuilt by `refresh.sh` |
-| ASM immediate memory | Append-only cross-agent handoffs in `~/.asm/memory.jsonl` | Immediate |
-| Obsidian vault | Canonical human-maintained decisions, gotchas, architecture, and history | Durable; enters the brain after OKF rebuild/refresh |
-| Mission graph | Dependencies, ownership, status, and evidence for the current request | Ephemeral; optionally persisted under `.codex/graph-runs/` |
+| ASM brain graph | Vault pages, code mapped by graphify, agent records as `memory:<id>` nodes, and their edges | Snapshot, rebuilt by `refresh.sh` |
+| ASM records | Cross-agent handoffs in `~/.asm/memory.jsonl` | Immediate |
+| Obsidian vault | Canonical decisions, traps and architecture | Durable; enters the graph on refresh |
+| Mission graph | This run's nodes, owners, statuses and evidence | The run file under `.codex/graph-runs/` |
 
-Current source files, tests, running systems, and authoritative external sources remain the truth for current behavior. Recall supplies context and traps; it does not waive present-state inspection.
+Current files, tests, running systems and authoritative external sources are the truth for "now". Recall supplies context and traps; it never replaces a live check of anything a node depends on.
 
-## Recall order
+## Recall ladder
 
-1. Search the subject with `brain_search`. Query `memory_recent` when a recent Claude/Codex handoff may be newer than the graph snapshot.
-2. Before reading or editing a mapped target file, call `brain_context` for that path. If it returns relevant `vault_pages`, read those pages before the edit.
-3. Use `brain_node`, `brain_neighbors`, or `brain_path` when the mission depends on an exact node, blast radius, or relationship.
-4. Read applicable `AGENTS.md` and current project files. Verify dated memory facts against current state before making a node depend on them.
-5. Only when ASM did not answer the knowledge question, descend to the generated vault index/catalog, project-specific code-graph tools, and finally `rg`/file inspection for discovery.
+Climb down. A question is answered when the fact is known **and** any state it asserts (deployed, pending, a flag, a commit) was checked live or became a `recon` node.
 
-Do not hand a child agent only a path. Include the relevant recall facts and their sources, or require the agent to run the same recall for its exact file scope.
+0. **In context**: `AGENTS.md`, plus the ASM session primer and prompt-recall nodes when the client runs ASM's hooks. Open a listed node with `brain_node`. A child gets no hook output; it starts at rung 1.
+1. **ASM search**: `brain_search(subject)`, and `memory_recent(limit=5, query=subject)` for handoffs newer than the graph. Note the ids of open threads this mission will finish.
+2. **ASM per file**: `brain_context(path)` before the first read or edit of a mapped file; read the bodies of the `vault_pages` it returns before editing. The code graph is graphify's extraction inside the brain: `brain_neighbors` gives a shared change's blast radius and `brain_path` how two nodes relate. There is no separate code-graph rung. On `node: null`, retry with more path segments, then `brain_search`; null never means nothing is known.
+3. **Disk**: `rg` and file reads, for what rungs 0-2 did not answer, for page bodies, and for vault pages newer than the graph.
+
+ASM returns metadata, meaning descriptions and paths; read a page from disk for its body. Records and pages are dated snapshots: a line naming a file, flag, port, commit or deploy state says what was true when it was written.
+
+Newer ASM runtimes cap `memory_recent` at 20,000 characters, list open threads with ids `<record-id>#<n>`, hide closed threads, and mark finished items `[DONE]`; older ones return whole records. Keep `limit` at 5 or less, with a `query`, either way. An MCP server started before an ASM upgrade keeps the old tool schema until the client restarts, so check the parameters a tool actually exposes before relying on one.
 
 ## Recall pack
 
-Keep 3-8 facts that change the plan. Every fact carries a source:
+Up to 8 facts, each of which changes a node, a criterion, a lock or a non-goal ([decomposition.md](decomposition.md)). An empty pack says what was searched. Give each child the facts its node needs, never just a path.
 
-- `asm:<node-id>` for an ASM graph node
-- `memory:<record-id>` for an immediate handoff
-- `vault:<page-id>` for canonical vault knowledge
-- `file:<path>#L<n>` for current local evidence
-- `cmd:<command>` for observed command output
-- `url:<canonical-url>` for an authoritative external source
+Every fact carries one of these sources; no other form counts:
 
-An unsourced assertion is a hypothesis. Turn it into a discovery or verification node instead of copying it into worker prompts as fact.
+- `asm:<full node id>`, such as `asm:vault:<page-id>` or `asm:memory:<record-id>`: what the graph asserts, not yet read
+- `record:<id>`: an ASM record you read, id without the `memory:` prefix; `record:<id>#<n>` for one of its threads
+- `vault:<page-id>`: only a page whose body you read
+- `file:<path>#L<n>`: current source
+- `cmd:<command>`: observed output
+- `url:<url>`: an authoritative external source
 
-## Write-back order
+`file:` and `cmd:` say what is true now; the others say what was true when written. A fact with a historical and a live source joins them with ` + `. An unsourced assertion is a guess: drop it or turn it into a `recon` node.
 
-After files change, record the verified unit of work with `memory_record`: concrete outcome, direct checks, affected files, decisions, open threads, agent name, and the session id supplied by the ASM gate. If no gate id is available, use one unique descriptive id for the run.
+Older prefixes: `brain:` means `asm:`; `memory:<record-id>` means `record:<record-id>`; `memory:<file>` in a Claude-edition run file names an agent memory file, a dated source like a record.
 
-Create or update a vault page only for durable architecture, operational rules, traps, or decisions. Obey the vault's `AGENTS.md`, never store secrets or raw private transcripts, and use `contradictions` when a new page supersedes an old one.
+## Write-back
 
-Run the ASM refresh after structural code changes or new durable vault pages so the graph catches up. Immediate memory remains searchable before refresh.
+The `write-back` node runs as `main`, with no verifier, at the point [run.md](run.md) names.
+
+1. Call `memory_record` with the session id the ASM memory gate names (otherwise one unique descriptive id for the run), a one-line `summary`, verified results in `details`, `files`, `decisions`, `open_threads` (every `blocked` gate among them), the agent name, and `supersedes` for earlier records of this mission.
+2. If the `memory_record` tool accepts `resolves`/`corrects`: close the threads this mission finished by id (`<record-id>#<n>`, a record id to close all its threads, or `vault:<id>` for a plan page now done), and file each stale claim recall surfaced as `corrects: [{target: vault:<id> | mem:<file> | idx:<index>:<file>, claimed, truth, evidence}]` for the curator instead of editing it yourself. Otherwise use `supersedes` for stale and finished records, fix a stale vault line under the vault's `AGENTS.md`, and put "claimed X, true Y, evidence Z" in `details`.
+3. Durable architecture, rules, traps or decisions get a vault page under the vault's own `AGENTS.md`; a page that revises another lists the old id in `contradictions`. Never store secrets or raw private transcripts.
+4. A gate that gets its word after the record gets a new record that supersedes it.
+
+`refresh.sh` rebuilds the graph and redeploys ASM's runtime, which every session shares. A mission runs it only when the mission is about ASM and no other session is working on ASM, in a node that holds `asm-refresh`. Records are searchable before any refresh.

@@ -1,16 +1,16 @@
 <purpose>
-Turn a raw prompt into a compiled mission: a testable objective, a measurable success signal, explicit non-goals, a recall pack of what is already known, and a dependency-ordered typed graph. Produces the brief that `run-mission` executes.
+Turn a raw prompt into a compiled mission: a testable objective, a measurable success signal, an authority boundary, explicit non-goals, a recall pack of what is already known, and a goal-backward typed graph with locks and gates. Produces the brief and the run file that `run-mission` executes.
 </purpose>
 
 <user-story>
-As the user, I want the loose thing I typed turned into an explicit mission before any work starts, so that the scope is pinned, what we already learned is reused instead of rediscovered, and I can see what "done" means before tokens are spent.
+As the user, I want the loose thing I typed turned into an explicit mission before any work starts, so that the scope is pinned, what we already learned is reused instead of rediscovered, and I can see what "done" means — and what will wait for me — before tokens are spent.
 </user-story>
 
 <when-to-use>
-- A prompt with 2+ independent lanes, or one that drifts scope mid-sentence
+- A prompt with 2+ lanes that write disjoint files, or one that drifts scope mid-sentence
 - A broad request where "done" is not yet defined
+- A plan request ("plan this", "break this down", "make me a plan") — compile only
 - Entry point routes here via `/graph-mission` or `/graph-mission compile`
-- NOT when the answer is one edit or one lookup — say so in one line and just do it
 </when-to-use>
 
 <context>
@@ -19,120 +19,142 @@ As the user, I want the loose thing I typed turned into an explicit mission befo
 
 <references>
 `~/.claude/skills/graph-mission/frameworks/graph-engineering.md` (during select_architecture)
-`~/.claude/skills/graph-mission/templates/mission-brief.md` (during emit_brief)
+`~/.claude/skills/graph-mission/frameworks/decomposition.md` (during build_the_graph)
+`~/.claude/skills/graph-mission/templates/mission-brief.md` (during build_the_graph and emit_brief)
 </references>
 
 <steps>
 
 <step name="read_the_prompt_literally" priority="first">
-Restate what was asked, in the user's own terms, before interpreting it. Then extract four things and write them down:
+Restate what was asked, in the user's own terms, before interpreting it. Then set the mode and extract five things.
 
-1. **Objective** — the one outcome. If the prompt contains two outcomes joined by "and", that is two missions or one mission with two lanes. Name which.
+**Mode.** `/graph-mission compile` or a plan request ("plan this", "break this down", "make me a plan") is **compile mode**: it ends with the brief. `/graph-mission` or a request to do the work is **run mode**: it continues into `run-mission`.
+
+<if condition="the request is one edit or one lookup">
+Say so in one line. In run mode, do the work directly. In compile mode, stop there.
+</if>
+
+1. **Objective** — the one outcome. Two outcomes joined by "and" or "and also" are two missions, or one mission whose objective names the shared purpose and whose success signal lists one check per lane. Name which.
 2. **Success signal** — how we will know it worked. It must be something a machine or a human can check: a command that exits 0, a page that renders, a claim with a source, a decision the user makes.
-3. **Constraints** — from the project's instruction files, from the environment doc, from anything the prompt states outright.
-4. **Non-goals** — what this mission will *not* touch. Derive these from the prompt's silence: files nearby that look related, refactors that would be "while we're here", scope the prompt did not ask for. Non-goals are the cheapest scope control there is.
+3. **Constraints** — from the project's instruction files (`CLAUDE.md`, `AGENTS.md`) and anything the prompt states outright. Recall adds the project memory's.
+4. **Authority boundary** — what this request lets the mission do alone (local edits, local tests, read-only calls), and which actions from the Authority section of the environment doc it touches. A mission never widens authority.
+5. **Non-goals** — what this mission will *not* touch. Derive these from the prompt's silence: files nearby that look related, refactors that would be "while we're here", scope the prompt did not ask for.
 
 Do not skip non-goals because the prompt seems narrow. A prompt that seems narrow is exactly where scope creeps.
+</step>
+
+<step name="recall_before_decomposing">
+Recall runs **before** decomposition and before any question to the user. A graph planned without it contains nodes the brain already knows are dead ends, and a question it would have answered.
+
+Walk the ladder in `context/operating-environment.md`:
+
+1. Use what is already in context: the "ASM recall" nodes the prompt hook listed, the skill-router hints, the SessionStart banner, the memory index. Open the relevant nodes with `mcp__asm__brain_node`.
+2. Call `mcp__asm__brain_search(<subject>)`, and `mcp__asm__memory_recent(limit=5, query=<subject>)` for handoffs newer than the graph.
+3. Read the project's hub or memory page, then the memory files the mission touches. Add their constraints.
+4. For files the mission will edit, call `mcp__asm__brain_context(<path>)` and read the `vault_pages` it returns from disk. For a shared change, call `mcp__asm__brain_neighbors` for the blast radius. On `node: null`, retry with more path segments before concluding anything.
+5. The disk last — grep, find, Read — for what the rungs above did not answer.
+
+Note the open threads this mission will finish, so the write-back can record them as finished. If your ASM version numbers threads, `memory_recent` lists them as `<record-id>#<n>` — note those ids, so the write-back can close them.
+
+Write the result as a **recall pack**: up to 8 facts, each with a source from the vocabulary in `templates/mission-brief.md`. Every fact that describes state is either confirmed now with `cmd:` or `file:` evidence, or becomes a `recon` node. An empty pack says what was searched.
 </step>
 
 <step name="gate_verifiability">
 If the success signal cannot be measured, the mission cannot start.
 
-- Can you name the check? → continue.
-- Can you *define* the check cheaply (write the failing test, name the file that must exist, name the command)? → define it now, then continue.
-- Does it genuinely require a decision only the user can make (which of two designs, whether to deploy, what "good enough" means)? → ask **one** blocking question with `AskUserQuestion`.
+<if condition="you can name the check">
+Continue.
+</if>
 
-  **Wait for the answer before continuing.** This is the only sanctioned wait point in the mission — everything after it proceeds autonomously.
+<if condition="you can define the check cheaply — a failing test, a file that must exist, a command">
+Define it now, then continue.
+</if>
+
+<if condition="the success signal depends on a decision">
+If the recall or a source answers it — the spec, the code, one of the user's earlier decisions — decide, cite the source in the brief, and continue.
+
+Only when no source answers it and the decision is genuinely the user's, ask **one** blocking question with `AskUserQuestion` (without it, write the question into the brief's blockers and stop).
+
+**Wait for the answer before continuing.** A decision that only one lane depends on is not asked here — it becomes a `gate` inside that lane.
+</if>
 
 Never start autonomous execution on an objective whose success is a matter of taste with no stated rubric.
 </step>
 
-<step name="recall_before_decomposing">
-Recall runs **before** decomposition, not after. A graph planned without it will contain nodes that memory already proved are dead ends.
-
-Walk the recall order in `context/operating-environment.md`, stopping as soon as the question is answered:
-
-1. Ask ASM first: `mcp__asm__brain_search(topic)` for the mission subject, `mcp__asm__brain_context(file)` for any file the mission will touch. One call returns both the knowledge pages and the code neighbourhood — it usually answers steps 3 and 4 at once.
-2. Scan the memory index already in context for lines touching this mission's subject, and read the topic files those lines point at.
-3. Check the vault for the project page before scanning code.
-4. For a code question in a project with a code-graph index, query it — it returns the symbols' source plus the call paths in one round trip.
-5. Only then grep.
-
-Write the result as a **recall pack**: 3-8 bullets of what is already known, each with its source. This pack goes into the brief and into every subagent prompt, so no worker rediscovers it.
-
-Then apply it. For each trap the recall surfaced, either a node encodes it (a test node that runs the project's real test path, a verify node that hits the live path) or a non-goal excludes it. State which.
-</step>
-
 <step name="select_architecture">
-Read `~/.claude/skills/graph-mission/frameworks/graph-engineering.md` and answer the six selection questions in order. Pick the **cheapest level that fits** and name it out loud in the brief.
+Read `~/.claude/skills/graph-mission/frameworks/graph-engineering.md` and answer the six selection questions in order. Pick the **cheapest level that fits** and name it out loud in the brief. Name a composite as a composite (`fan-out → reduce → verify`).
 
 The most common mistake here is over-graphing. Two checks before you commit to a fan-out:
-- Would one agent in one context do this faster? Then it is not a mission — say so and do the work.
-- Do the "parallel" lanes actually write to the same files? Then they are not independent; serialize them or isolate them.
+- Would one agent in one context do this faster? Then it is not a mission — say so, and follow the one-edit rule in `read_the_prompt_literally`.
+- Do the "parallel" lanes write the same files or need the same exclusive resource? Then they are not independent; serialize them or isolate them.
 </step>
 
 <step name="build_the_graph">
-Emit the typed graph. Two node types only — a `step` is work, a `claim` is an assertion that must carry evidence. Artifacts are a field on a step, not a third type.
+Read `~/.claude/skills/graph-mission/frameworks/decomposition.md` and decompose **goal-backward**: start at the terminal check, turn "what must be true for it to pass?" into conditions, and resolve each one as the framework says.
 
-Every step needs:
-- `id` — short, stable, referenced by dependents
-- `action` — what it does, imperative
-- `role` — which agent type from the environment doc runs it, or `self` for inline work
-- `depends_on` — ids only, no prose
-- `success` — the criterion, concrete enough to fail
-- `artifact` — the path it produces, when it produces one
+Give every step the fields in `templates/mission-brief.md`: `id`, `kind`, `action`, `role`, `depends_on`, `paths`, `locks` (from the framework's list), `success`, `artifact` — and `loop` for an improvement loop. `decide`, `gate`, `reduce` and `write-back` nodes run as `self`.
 
-Every claim needs a `source` from the allowed set: `brain:<node-id>`, `memory:<file>`, `vault:<page-id>`, `file:<path>#L<n>`, `cmd:<command>`. A claim with no source is not a claim, it is a guess — drop it or turn it into a step that goes and finds out.
+Write the claims collected so far into `claims` with `from_step: null`, and every decision taken from a source into `decisions` with that source. A claim with no source is a guess — drop it or turn it into a `recon` node.
 
-Then validate, mechanically:
-- every `depends_on` points at a real id
-- no cycles
+Apply the recall pack: each item must change a node, a criterion, a lock or a non-goal. State which.
+
+Compute the waves as the framework describes. Then validate, mechanically:
+- every `depends_on` points at a real id, and there are no cycles
 - every step has a `success`
-- every terminal step's success rolls up to the mission's success signal — if nothing does, the graph does not achieve the objective
+- every `build` has a `verify` that depends directly on it, and a node that uses a build's output depends on that `verify`
+- every action from the Authority section is a `gate`
+- commits on lane branches and on a local integration branch are working commits. The work lands on the target branch — the one the mission hands over — only after reviews by at least two evaluator types and a `verify` that ran the full suite, alone. A `reduce` lands it, or a `gate` when landing means a push
+- no two nodes in one wave write the same path or hold the same lock
+- every terminal node except `write-back` rolls up to the mission's success signal — if none does, the graph does not achieve the objective
+- a mission that changes files ends in a `write-back` node
 
-Set the budget before adding workers: `max_subagents` (default 4), `max_rounds` (default 3), and what to do when it runs out.
+Set the budget before adding workers: `max_subagents` (default 4), `max_rounds` (default 3) and `on_exhaustion`, as the template defines them.
 </step>
 
 <step name="emit_brief">
-Read `~/.claude/skills/graph-mission/templates/mission-brief.md` and fill it.
+Read `~/.claude/skills/graph-mission/templates/mission-brief.md`.
 
-Track the graph with `TodoWrite` — one todo per step node, so progress is visible without re-reading the brief.
-
-**Persist the run file only when it earns its cost:** 3+ nodes, or any subagent dispatch, or work likely to outlive the context window. Write it to `.claude/graph-runs/<UTC-timestamp>.json` in the project. A two-node mission needs no file — the todos are the lineage.
-
-Present the brief to the user: objective, success signal, non-goals, recall pack, the graph as a short ordered list, budget, and the architecture level you chose.
+1. Write the run file — every mission gets one. Put it under `.claude/graph-runs/` in the working tree the mission edits, or in the session's working directory when that tree does not exist yet. Name it as the template says. When the location is inside a git repository, first append `.claude/graph-runs/` to the file that `git rev-parse --git-path info/exclude` prints — this works in linked worktrees too, where `.git` is a file.
+2. Track progress as the environment doc's Dispatch section says.
+3. Present the brief to the user in their language, filled from the template.
 </step>
 
 <step name="confirm_or_proceed" priority="last">
-If invoked as `/graph-mission compile`, stop here and hand over the brief.
+<if condition="compile mode">
+Stop here and hand over the brief.
+</if>
 
-Otherwise proceed straight into `tasks/run-mission.md` — do not ask "shall I start?". The brief *is* the plan; asking again just costs a turn. Stop only if the gate in `gate_verifiability` raised a real decision, or if the graph turned out to contain a destructive or production-facing node.
+<if condition="run mode">
+Proceed straight into `tasks/run-mission.md` — do not ask "shall I start?". The brief *is* the plan; asking again just costs a turn. Gates stop the run where they sit in the graph, not before it starts.
+</if>
 </step>
 
 </steps>
 
 <output>
 ## Artifact
-A mission brief (in the response) and — when it earns its cost — a run file.
+A mission brief (in the response, in the user's language) and a run file.
 
 ## Location
-`.claude/graph-runs/<UTC-timestamp>.json` in the project root.
+`.claude/graph-runs/{utc-timestamp}-{mission-slug}.json`, excluded from git.
 
 ## Shape
-See `templates/mission-brief.md` for both the brief sections and the run-file JSON schema.
+See `templates/mission-brief.md` for the brief, the run-file schema, the statuses and the source vocabulary.
 </output>
 
 <acceptance-criteria>
-- [ ] Objective is one sentence and names one outcome
+- [ ] Mode set: compile mode for `compile` and plan requests, run mode otherwise
+- [ ] Objective is one sentence; with two lanes, the success signal lists one check per lane
 - [ ] Success signal is checkable by a command, a file, a rendered page, or a sourced claim
+- [ ] Authority boundary names every action in the graph that waits for the user
 - [ ] Non-goals list is non-empty
-- [ ] Recall pack drawn from the brain / memory / vault before any code scan, each bullet sourced
-- [ ] Every trap the recall surfaced is either encoded in a node or excluded by a non-goal
+- [ ] Recall ran before any question and any code scan; every fact sourced; every status fact confirmed now or turned into a `recon` node
+- [ ] Every recall item changed a node, a criterion, a lock or a non-goal
 - [ ] Architecture level named, and it is the cheapest one that fits
-- [ ] Graph validates: real ids, no cycles, every step has `success`, terminal successes roll up to the mission's
-- [ ] Every claim carries a source from the allowed set
+- [ ] Waves computed, then the graph validated against every rule in `build_the_graph`
 - [ ] Budget set before any subagent is dispatched
-- [ ] Run file written when the mission has 3+ nodes or dispatches subagents
+- [ ] Run file written and excluded from git
+- [ ] The brief reached the user
 </acceptance-criteria>
 
 ---

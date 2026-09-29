@@ -1,47 +1,60 @@
 ---
 name: graph-mission
-description: "Compile and run complex, multi-lane Codex work as an evidence-backed mission graph tied to ASM: recall before decomposition, define measurable success and non-goals, coordinate only independent lanes, persist resumable lineage, verify effects, and write back durable outcomes. Use when the user explicitly asks for graph-mission or a task has multiple independent research, build, or verification lanes or must survive interruption. Do not use for a direct answer, one small edit, or a tightly coupled change best kept in one context."
+description: "Compile a broad, vague, or multi-lane request into an evidence-backed mission graph before doing the work, then run it with child agents, gates for the user's authority, and a resumable run file under .codex/graph-runs. Use when the user invokes graph-mission or asks to plan or break down work; when two or more lanes that write disjoint files can run in parallel; when success is not yet defined or the scope drifts; when work must survive interruption; or to resume an interrupted mission. Plan requests stop after the brief. Not for a direct answer, one small edit, or a tightly coupled change best kept in one context."
 ---
 
 # Graph Mission for Codex
 
-Turn a broad request into a small, typed execution graph before doing expensive work. The graph is temporary execution state; ASM and the Obsidian vault are the durable knowledge system.
-
-The useful distinction is:
+Compile the request into a small typed graph before expensive work, then run it. The graph is temporary execution state; ASM and the vault hold durable knowledge.
 
 - ASM recalls what the workspace already knows.
 - The mission graph decides what this run still needs to do.
 - Current files and live checks establish what is true now.
-- ASM write-back makes verified outcomes available to later Claude, Codex, and Gemini sessions.
+- ASM write-back makes verified outcomes available to later sessions of any agent.
 
 ## Activation boundary
 
-Use this skill for an explicit `$graph-mission` request, two or more genuinely independent lanes, evidence-heavy research plus implementation, broad work whose success is not yet pinned down, or work likely to cross a compaction or session boundary.
+Use this skill for an explicit `$graph-mission`, two or more lanes that write disjoint files, research plus implementation, broad work whose success is not yet pinned down, or work likely to cross a compaction or session boundary.
 
-If the task is one lookup, one localized edit, or a tightly coupled design/refactor, choose zero-shot or a short chain and do the work directly. State that the graph would cost more than it saves; do not manufacture ceremony.
+For one lookup, one localized edit, or a tightly coupled design or refactor, say in one line that a graph would cost more than it saves, then do the work directly (in compile mode, stop there).
 
-## Required workflow
+## Modes
 
-1. Read [references/knowledge-loop.md](references/knowledge-loop.md) and perform ASM recall before decomposing the request or inspecting mapped project files.
-2. Read [references/compile.md](references/compile.md) and [references/graph-architecture.md](references/graph-architecture.md), then compile one objective, one checkable success signal, explicit non-goals, authorization boundaries, a sourced recall pack, and the cheapest graph that fits.
-3. Mirror the top-level nodes in the client plan. Share a concise mission brief in commentary and proceed without asking for redundant confirmation unless a real user decision or new authority is required.
-4. Read [references/run.md](references/run.md) before execution. Keep architecture, synthesis, conflict resolution, and final verification with the primary agent.
-5. Read [references/evidence-gate.md](references/evidence-gate.md) before accepting any worker result or marking a node verified. A worker report is a lead, not proof.
-6. Use [references/mission-schema.md](references/mission-schema.md) when the run needs persistent lineage or is being resumed.
-7. Close the knowledge loop through ASM. Record only verified outcomes; create or update a canonical vault page only for knowledge that should remain durable beyond the handoff.
+- **Compile**: a plan request ("plan this", "break this down", `$graph-mission compile`). Ends with the brief as the final answer.
+- **Run**: `$graph-mission`, or a request to do the work. Compiles, then executes without asking "shall I start?"; gates stop the run where they sit in the graph.
+- **Resume**: "resume the mission", `$graph-mission resume`, or a run file the user names. Continues per [run.md](references/run.md).
 
-## Codex execution invariants
+## Workflow
 
-- The primary agent owns the mission graph and keeps only one plan step `in_progress` at a time.
-- When collaboration tools are available and higher-priority instructions permit delegation, this skill calls for child agents only for genuinely independent lanes. Reserve one concurrency slot for the primary agent: at most three children, and fewer when the available slot count is lower.
-- Agents share a filesystem. Never let concurrent workers write the same file or overlapping generated artifacts. Serialize the work or isolate it in explicit worktrees.
-- Pass a worker only its node, relevant recall facts, exact paths, non-goals, success criterion, permission boundary, and expected output. Do not dump the whole conversation.
-- Keep user changes intact. A failed node does not authorize resetting or reverting unrelated work.
-- A mission does not expand authority. Deployments, destructive actions, credential use, pushes, external messages, and other consequential mutations still require the authorization they would require outside this skill.
-- Persist `.codex/graph-runs/*.json` only when it earns the write: three or more nodes, child-agent dispatch, or likely interruption. Update it after each execution wave so it remains a real resume point.
+1. [knowledge-loop.md](references/knowledge-loop.md): recall before decomposing, opening mapped files, or asking the user anything.
+2. [compile.md](references/compile.md): the contract, authority boundary, validation list, run file and brief.
+3. [decomposition.md](references/decomposition.md) while building the graph: goal-backward nodes, seven kinds, locks, waves. [graph-architecture.md](references/graph-architecture.md) picks the cheapest level that fits.
+4. Mirror the nodes in the plan tool and share the brief. Compile mode stops here.
+5. [run.md](references/run.md): frontier, dispatch, gates, revise loop, lineage, write-back, close-out.
+6. [evidence-gate.md](references/evidence-gate.md) before any node is marked `verified`. A child's report is a lead, not proof.
+7. [mission-schema.md](references/mission-schema.md) whenever the run file is written, updated or resumed.
 
-## Output contract
+## Codex invariants
 
-During execution, commentary should make the objective, success signal, architecture level, current frontier, and blockers easy to audit without reproducing the whole run file.
+- The primary agent owns objective interpretation, architecture, mission state, synthesis, conflicts, gates and final verification. It keeps one plan step `in_progress` at a time.
+- This skill asks for child agents for independent lanes, when collaboration tools exist and higher-priority instructions permit delegation. One slot stays with the primary: at most three children at once, verifiers included, fewer when fewer slots are free. Children spawn no agents of their own.
+- Agents share a filesystem. Concurrent writers need disjoint `paths` and no common lock, or an explicit worktree each.
+- User changes stay intact. A failed node never authorizes resetting or reverting work the mission did not create.
+- Every mission has a run file under `.codex/graph-runs/`, kept out of git and true after every result.
 
-The final answer leads with the achieved outcome, then names direct verification, unresolved nodes or authorization blockers, and any durable ASM/vault write-back. Never upgrade `pending`, `failed`, or merely worker-reported work into a fluent claim of completion.
+## Authority
+
+A mission never widens authority. These wait for the user's explicit word, and each one is a `gate` node:
+
+- deploy, push, or an outbound message
+- spending money
+- using a credential: reading, copying or passing a secret, or signing in to an outside service as the user. Running an app with the keys it already has is not
+- anything that drives the user's screen, mouse or keyboard
+- changing a runtime every session shares: ASM's runtime, global hooks, agent client configuration, scheduled jobs. Data written through ASM's own tools is not
+- a destructive or irreversible operation on anything the mission did not create
+
+A request in the prompt ("…and deploy it") is intent, not the word, and the word covers one action. A sandbox approval prompt is not the word either: ask first, with the evidence.
+
+## Output
+
+Commentary keeps the objective, success signal, architecture, frontier and blockers auditable without pasting the run file. The final answer follows the close-out order in run.md and never upgrades `pending`, `failed`, `blocked` or child-reported work into completion. Report in the user's language; run files, node ids and child prompts stay English.
