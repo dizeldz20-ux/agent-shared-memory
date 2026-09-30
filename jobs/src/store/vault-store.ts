@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { readdir, readFile, stat } from 'node:fs/promises';
-import { join, relative } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import { bodyHead, frontmatterScalars } from './frontmatter-lite.js';
 import type { VaultPage } from './store.types.js';
 
@@ -20,7 +20,8 @@ export class VaultStore {
   async page(path: string): Promise<VaultPage> {
     const [text, info] = await Promise.all([readFile(path, 'utf8'), stat(path)]);
     const front = frontmatterScalars(text);
-    const rel = relative(this.root, path);
+    // '/' on every OS: hub_glob and the file: id fallback are written with it.
+    const rel = relative(this.root, path).split(sep).join('/');
     return {
       id: front.id || `file:${rel}`,
       path,
