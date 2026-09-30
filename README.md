@@ -44,12 +44,13 @@ Grok Build's native hooks provide live file activity and the one-retry stop gate
 
 ## Requirements
 
+- macOS, Linux or Windows 10/11
 - Python 3.11 or newer
 - [`uv`](https://docs.astral.sh/uv/)
 - Graphify: `uv tool install graphifyy`
-- Node.js 24 or newer for the complete frontend build and test workflow
+- Node.js 22 or newer (the refresh, the installer, the hooks and the background jobs); Node.js 24 for the complete frontend build and test workflow
 - At least one local MCP-capable coding agent
-- Optional: an Obsidian vault with the [documented OKF structure](docs/vault-structure.md)
+- Optional: an Obsidian vault with the [documented OKF structure](docs/vault-structure.md). Copy `tools/okf-build.mjs` into `<vault>/okf/` once; every refresh then rebuilds the vault's catalog with it
 
 ## Quick start
 
@@ -70,6 +71,22 @@ cd ..
 chmod +x refresh.sh start-asm.sh install-agent-integrations.sh
 ./install-agent-integrations.sh
 ```
+
+On Windows, in PowerShell or cmd:
+
+```powershell
+git clone https://github.com/dizeldz20-ux/agent-shared-memory.git
+cd agent-shared-memory
+
+copy sources.example.json sources.json
+# Edit sources.json: add projects and set vault to null for code-only mode.
+
+uv tool install graphifyy
+npm.cmd --prefix jobs ci
+npm.cmd --prefix jobs run asm:install
+```
+
+Type `npm.cmd`, not `npm`: in PowerShell a bare `npm` runs `npm.ps1`, which Windows' default execution policy refuses to run. The refresh and the installer are one TypeScript implementation (`jobs/src/refresh`, `jobs/src/install`) on every platform; `refresh.sh`, `refresh.ps1` and `install-agent-integrations.sh` only build `jobs/` and hand it their arguments.
 
 The installer:
 
@@ -155,11 +172,14 @@ For a client not handled by the installer, copy the `asm` entry from `~/.asm/cli
 ```bash
 ./refresh.sh            # every source
 ./refresh.sh --changed  # only sources with files newer than their last extract
+./refresh.sh --brain-only  # the graph files only, no code
 ```
+
+On Windows: `npm.cmd --prefix jobs run asm:refresh -- --changed`, or `.\refresh.ps1 --changed` where PowerShell scripts may run.
 
 The refresh rebuilds the optional vault OKF graph, extracts each code source independently, merges the graph, atomically deploys runtime files, and hot-reloads the UI only if it is already running. It does not start the UI. `--changed` makes a refresh cheap enough to run after every real change instead of once a week.
 
-PowerShell users can run `./refresh.ps1`. The POSIX integration installer currently provides the complete automatic multi-agent setup; Windows users can copy the portable MCP entry into their client configuration.
+The daily background job runs the same refresh with `--changed --brain-only`, from the deployed runtime, so it never ships code from a checkout that is being edited.
 
 ## Optional live UI
 
@@ -177,6 +197,8 @@ The server expects a production frontend in `frontend/dist`. Build it with `npm 
 ~/.asm/
 ├── brain.json
 ├── brain.index.json
+├── brain.pages.json     # vault page bodies as stemmed word sets — the searchable text
+├── asm_text.py          # the one tokenizer mcp_server.py and merge.py share
 ├── memory.jsonl
 ├── usage.jsonl          # node opens (brain_node / brain_context) — recall feedback
 ├── skill-map.json       # derived skill routing map (rebuilt from every installed SKILL.md)
@@ -200,21 +222,20 @@ The server expects a production frontend in `frontend/dist`. Build it with `npm 
 ## Privacy and security
 
 - Keep `sources.json`, generated runtime data, credentials, and local event logs out of Git.
-- `brain.json` contains graph metadata and local file paths. Obsidian note bodies are not copied into it, but the graph still belongs on the local machine unless deliberately sanitized.
+- `brain.json` contains graph metadata and local file paths. Obsidian note bodies are not copied into it, but `brain.pages.json` beside it holds every vault page body reduced to a stemmed word set — recoverable vocabulary, not readable prose, and still local-only. The graph belongs on the local machine unless deliberately sanitized.
 - Live activity records agent name, tool name, phase, and file paths. It does not send prompts, source contents, tool inputs, or tool output to the UI event stream.
 - The optional Codex rollout fallback derives tool names and paths without publishing prompt text or command output. Disable it with `ASM_CODEX_ROLLOUT_FALLBACK=0`.
 - Keep the UI bound to `127.0.0.1`; do not expose the local runtime through a public tunnel without adding authentication and reviewing the data boundary.
 - Treat all text passed to `memory_record` as durable. Review it before recording and never include secrets.
-
-## Migration from C2B
-
-During one-time migration, ASM imports recoverable JSONL files from `~/.claude/c2b`, removes the old user-scoped `c2b` MCP registration and permission, and leaves the legacy directory untouched as a rollback/audit source. Stable historical vault IDs are not renamed because doing so would break existing links.
 
 ## Development checks
 
 ```bash
 uv run python -m unittest discover -s tests
 bash -n refresh.sh install-agent-integrations.sh start-asm.sh
+npm --prefix jobs ci
+npm --prefix jobs run typecheck
+npm --prefix jobs test
 
 cd frontend
 npm ci

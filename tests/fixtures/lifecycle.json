@@ -1,0 +1,359 @@
+{
+  "comment": "Shared by lifecycle.py, hook/asm-lifecycle.js and jobs/src/ledger/fold.ts: all three must fold these ops into exactly `expected`. Wrongly typed fields make a line invalid for every reader, and a repeated id is folded once.",
+  "records": [
+    {
+      "id": "a000000000000001",
+      "created_at": "2026-09-28T10:00:00+03:00",
+      "open_threads": [
+        "first",
+        "second"
+      ]
+    },
+    {
+      "id": "a000000000000002",
+      "created_at": "2026-09-28T11:00:00+03:00",
+      "supersedes": [
+        "a000000000000003"
+      ],
+      "open_threads": []
+    },
+    {
+      "id": "a000000000000003",
+      "created_at": "2026-09-27T10:00:00+03:00",
+      "open_threads": [
+        "gone with its record"
+      ]
+    },
+    {
+      "id": "a000000000000004",
+      "created_at": "2026-09-28T12:00:00+03:00",
+      "open_threads": [
+        "x",
+        "y"
+      ]
+    }
+  ],
+  "ops": [
+    {
+      "id": "lc_0000000000000001",
+      "ts": "2026-09-29T10:00:00+03:00",
+      "op": "close_thread",
+      "target": {
+        "kind": "thread",
+        "id": "a000000000000001#0"
+      },
+      "reason": "answered by a later record",
+      "evidence": [
+        "memory:a000000000000002"
+      ],
+      "actor": {
+        "kind": "agent",
+        "name": "test"
+      },
+      "mode": "auto"
+    },
+    {
+      "id": "lc_0000000000000002",
+      "ts": "2026-09-29T10:01:00+03:00",
+      "op": "mark_done",
+      "target": {
+        "kind": "page",
+        "id": "vault:plan-a"
+      },
+      "reason": "the plan shipped",
+      "evidence": [
+        "memory:a000000000000002"
+      ],
+      "actor": {
+        "kind": "janitor",
+        "name": "janitor"
+      },
+      "mode": "approved"
+    },
+    {
+      "id": "lc_0000000000000003",
+      "ts": "2026-09-29T10:02:00+03:00",
+      "op": "retire",
+      "target": {
+        "kind": "record",
+        "id": "a000000000000004"
+      },
+      "reason": "a status snapshot a later record overtook",
+      "superseded_by": "memory:a000000000000002",
+      "actor": {
+        "kind": "janitor",
+        "name": "janitor"
+      },
+      "mode": "approved"
+    },
+    {
+      "id": "lc_0000000000000004",
+      "ts": "2026-09-29T10:03:00+03:00",
+      "op": "retire",
+      "target": {
+        "kind": "page",
+        "id": "vault:old-page"
+      },
+      "reason": "replaced",
+      "actor": {
+        "kind": "owner",
+        "name": "owner"
+      },
+      "mode": "approved"
+    },
+    {
+      "id": "lc_0000000000000005",
+      "ts": "2026-09-29T10:04:00+03:00",
+      "op": "restore",
+      "target": {
+        "kind": "page",
+        "id": "vault:old-page"
+      },
+      "reason": "retired by mistake",
+      "undoes": "lc_0000000000000004",
+      "actor": {
+        "kind": "owner",
+        "name": "owner"
+      },
+      "mode": "approved"
+    },
+    {
+      "id": "lc_0000000000000006",
+      "ts": "2026-09-29T10:05:00+03:00",
+      "op": "restore",
+      "target": {
+        "kind": "page",
+        "id": "vault:old-page"
+      },
+      "reason": "a second restore is a no-op",
+      "undoes": "lc_0000000000000004",
+      "actor": {
+        "kind": "owner",
+        "name": "owner"
+      },
+      "mode": "approved"
+    },
+    {
+      "id": "lc_0000000000000007",
+      "ts": "2026-09-29T10:06:00+03:00",
+      "op": "correct",
+      "target": {
+        "kind": "page",
+        "id": "vault:plan-a"
+      },
+      "reason": "correction requested by memory:a000000000000002",
+      "mode": "requested",
+      "claimed": "not deployed",
+      "truth": "deployed on 27/09",
+      "actor": {
+        "kind": "agent",
+        "name": "test"
+      }
+    },
+    {
+      "id": "lc_0000000000000008",
+      "ts": "2026-09-29T10:07:00+03:00",
+      "op": "correct",
+      "target": {
+        "kind": "page",
+        "id": "vault:plan-a"
+      },
+      "reason": "applies an unknown request",
+      "mode": "approved",
+      "applies": "lc_00000000000000ff",
+      "actor": {
+        "kind": "curator",
+        "name": "curator"
+      }
+    },
+    {
+      "id": "lc_0000000000000009",
+      "ts": "2026-09-29T10:08:00+03:00",
+      "op": "retire",
+      "target": {
+        "kind": "record",
+        "id": "a000000000000001"
+      },
+      "actor": {
+        "kind": "agent",
+        "name": "no reason"
+      },
+      "mode": "auto"
+    },
+    {
+      "id": "lc_000000000000000a",
+      "ts": "2026-09-29T10:09:00+03:00",
+      "op": "explode",
+      "target": {
+        "kind": "record",
+        "id": "a000000000000001"
+      },
+      "reason": "unknown op kinds are skipped",
+      "mode": "auto"
+    },
+    {
+      "ts": "2026-09-29T10:10:00+03:00",
+      "actor": {
+        "kind": "agent",
+        "name": "test"
+      },
+      "mode": "auto",
+      "id": "lc_00000000000000f1",
+      "op": [
+        "retire"
+      ],
+      "target": {
+        "kind": "record",
+        "id": "a000000000000001"
+      },
+      "reason": "a list op is skipped by every reader"
+    },
+    {
+      "ts": "2026-09-29T10:10:00+03:00",
+      "actor": {
+        "kind": "agent",
+        "name": "test"
+      },
+      "mode": "auto",
+      "id": "lc_00000000000000f2",
+      "op": "retire",
+      "target": {
+        "kind": [
+          "record"
+        ],
+        "id": "a000000000000001"
+      },
+      "reason": "a list kind is skipped"
+    },
+    {
+      "ts": "2026-09-29T10:10:00+03:00",
+      "actor": {
+        "kind": "agent",
+        "name": "test"
+      },
+      "mode": "auto",
+      "id": "lc_00000000000000f3",
+      "op": "retire",
+      "target": {
+        "kind": "record",
+        "id": [
+          "a000000000000001"
+        ]
+      },
+      "reason": "a list id is skipped"
+    },
+    {
+      "ts": "2026-09-29T10:10:00+03:00",
+      "actor": {
+        "kind": "agent",
+        "name": "test"
+      },
+      "mode": "auto",
+      "id": "lc_00000000000000f4",
+      "op": "retire",
+      "target": {
+        "kind": "record",
+        "id": "a000000000000001"
+      },
+      "reason": [
+        "a list reason is skipped"
+      ]
+    },
+    {
+      "ts": "2026-09-29T10:10:00+03:00",
+      "actor": {
+        "kind": "agent",
+        "name": "test"
+      },
+      "mode": "approved",
+      "id": "lc_00000000000000f5",
+      "op": "correct",
+      "applies": [
+        "lc_0000000000000007"
+      ],
+      "target": {
+        "kind": "page",
+        "id": "vault:plan-a"
+      },
+      "reason": "a list applies is skipped"
+    },
+    {
+      "ts": [
+        "2026-09-29"
+      ],
+      "actor": {
+        "kind": "agent",
+        "name": "test"
+      },
+      "mode": "auto",
+      "id": "lc_00000000000000f6",
+      "op": "retire",
+      "target": {
+        "kind": "record",
+        "id": "a000000000000001"
+      },
+      "reason": "a list timestamp is skipped"
+    },
+    {
+      "ts": "2026-09-29T10:10:00+03:00",
+      "actor": {
+        "kind": "agent",
+        "name": "test"
+      },
+      "mode": "auto",
+      "id": "lc_00000000000000d1",
+      "op": "close_thread",
+      "target": {
+        "kind": "thread",
+        "id": "a000000000000001#1"
+      },
+      "reason": "written twice"
+    },
+    {
+      "ts": "2026-09-29T10:10:00+03:00",
+      "actor": {
+        "kind": "agent",
+        "name": "test"
+      },
+      "mode": "auto",
+      "id": "lc_00000000000000d1",
+      "op": "close_thread",
+      "target": {
+        "kind": "thread",
+        "id": "a000000000000001#1"
+      },
+      "reason": "written twice"
+    },
+    {
+      "ts": "2026-09-29T10:10:00+03:00",
+      "actor": {
+        "kind": "agent",
+        "name": "test"
+      },
+      "mode": "approved",
+      "id": "lc_00000000000000d2",
+      "op": "restore",
+      "target": {
+        "kind": "thread",
+        "id": "a000000000000001#1"
+      },
+      "undoes": "lc_00000000000000d1",
+      "reason": "a duplicated line is folded once, so its restore reopens the thread"
+    }
+  ],
+  "first_op_canonical_id": "lc_fc533952edd30327",
+  "expected": {
+    "states": {
+      "thread:a000000000000001#0": "closed",
+      "page:vault:plan-a": "done",
+      "record:a000000000000004": "retired",
+      "record:a000000000000003": "retired"
+    },
+    "open_threads": [
+      "a000000000000001#1"
+    ],
+    "requested": [
+      "lc_0000000000000007"
+    ]
+  }
+}

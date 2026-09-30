@@ -8,20 +8,17 @@ import { CAMERA_PRESETS_3D, LIVE_SIGNAL_DURATION_MS, type CameraPreset3D } from 
 import {
   agentLane,
   canonicalLiveEvent,
-  fairFileActivity,
   isFileAccessEvent,
-  liveAction,
-  liveFilePath,
   mergeFileEvents,
   pruneExpiredLiveState,
 } from './liveActivity';
-import { liveAgentPalette } from './liveAgentPalette';
+import { LiveDeck } from './LiveDeck';
+import { type AgentSighting, pruneSightings, recordSightings } from './liveRoster';
 import type { BrainData, BrainNode, LiveActivitySource, LiveEvent } from './types';
 import { LAYER_COLORS, LAYER_NAMES } from './types';
 
 const EPHEMERAL_TTL = 60000;
 const EPHEMERAL_FLUSH_MS = 550;
-const ACTIVE_AGENT_MS = 120000;
 export const STATIC_PREVIEW = (import.meta as ImportMeta & { env?: Record<string, string> }).env?.VITE_STATIC_PREVIEW === '1' || location.port === '5931';
 const assetUrl = (name: string) => new URL(`demo/${name}`, document.baseURI).toString();
 type ViewId = '3d' | 'network' | 'rings';
@@ -53,8 +50,9 @@ export default function App() {
   const [cameraPreset, setCameraPreset] = useState<CameraPreset3D>('whole');
   const [layoutResetToken, setLayoutResetToken] = useState(0);
   const [reduceMotion, setReduceMotion] = useState(() => matchMedia('(prefers-reduced-motion: reduce)').matches);
-  const [activityTick, setActivityTick] = useState(0);
   const [activityRevision, setActivityRevision] = useState(0);
+  const [rosterRevision, setRosterRevision] = useState(0);
+  const [graphGeneratedAt, setGraphGeneratedAt] = useState<string | null>(null);
 
   const fgRef = useRef<any>(null);
   const layoutPositionsRef = useRef({
@@ -68,7 +66,7 @@ export default function App() {
   const activeRef = useRef(new Map<string, number>());
   const activeAgentsRef = useRef(new Map<string, string>());
   const activeSourcesRef = useRef(new Map<string, LiveActivitySource>());
-  const agentSeenRef = useRef(new Map<string, number>());
+  const sightingsRef = useRef(new Map<string, AgentSighting>());
   const dataRef = useRef<BrainData | null>(null);
   dataRef.current = data;
   const nodeIdsRef = useRef(new Set<string>());
@@ -94,10 +92,13 @@ export default function App() {
 
   useEffect(() => {
     const timer = setInterval(() => {
+      const now = Date.now();
       if (pruneExpiredLiveState(
-        Date.now(), activeRef.current, activeAgentsRef.current, activeSourcesRef.current,
+        now, activeRef.current, activeAgentsRef.current, activeSourcesRef.current,
       )) setActivityRevision((revision) => revision + 1);
-      setActivityTick((value) => value + 1);
+      // The deck ages its own rows every second off one clock; this only keeps
+      // the sighting map from holding lanes whose window closed while it was quiet.
+      if (pruneSightings(sightingsRef.current, now)) setRosterRevision((revision) => revision + 1);
     }, 10000);
     return () => clearInterval(timer);
   }, []);
@@ -113,6 +114,7 @@ export default function App() {
       .then((g) => {
         if (cancelled) return;
         seedBrainPositions(g.nodes);
+        setGraphGeneratedAt(typeof g.generatedAt === 'string' ? g.generatedAt : null);
         setData({ nodes: g.nodes, links: g.links });
       })
       .catch((error) => {
@@ -154,20 +156,27 @@ export default function App() {
     fgRef.current?.cameraPosition(camera.position, camera.lookAt, 700);
   }, []);
 
-  const zoomCamera3D = useCallback((factor: number) => {
+  const zoomCamera3D = useCallback((direction: 1 | -1) => {
     if (modeRef.current !== '3d') return;
     const fg = fgRef.current;
-    const camera = fg?.camera?.();
-    if (!fg || !camera?.position) return;
-    const target = fg.controls?.()?.target ?? { x: 0, y: 0, z: 0 };
-    const next = {
-      x: target.x + (camera.position.x - target.x) * factor,
-      y: target.y + (camera.position.y - target.y) * factor,
-      z: target.z + (camera.position.z - target.z) * factor,
-    };
+    const canvas = fg?.renderer?.()?.domElement as HTMLCanvasElement | undefined;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
     fg.resumeAnimation?.();
-    fg.cameraPosition(next, target, reduceMotion ? 0 : 220);
-  }, [reduceMotion]);
+    // The buttons are the wheel. Scaling the camera toward its orbit target here
+    // instead would collapse it onto the pivot and freeze the interior again —
+    // the exact defect the wheel stopped having — and would leave two different
+    // answers on one screen for what "zoom in" means.
+    for (let notch = 0; notch < 3; notch++) {
+      canvas.dispatchEvent(new WheelEvent('wheel', {
+        deltaY: direction * 120,
+        clientX: rect.left + rect.width / 2,
+        clientY: rect.top + rect.height / 2,
+        bubbles: true,
+        cancelable: true,
+      }));
+    }
+  }, []);
 
   const zoomCamera2D = useCallback((factor: number) => {
     if (modeRef.current !== '2d') return;
@@ -193,20 +202,13 @@ export default function App() {
     const newEphemerals: BrainNode[] = [];
     const newLinks: BrainData['links'] = [];
     const d = dataRef.current;
-    const activeAgentCountBefore = [...agentSeenRef.current.values()]
-      .filter((seenAt) => now - seenAt <= ACTIVE_AGENT_MS).length;
-    for (const [lane, seenAt] of agentSeenRef.current) {
-      if (now - seenAt > ACTIVE_AGENT_MS) agentSeenRef.current.delete(lane);
-    }
     pruneExpiredLiveState(now, activeRef.current, activeAgentsRef.current, activeSourcesRef.current);
     const normalizedEvents = evs.map((event) => canonicalLiveEvent(event, nodeByIdRef.current));
-    for (const event of normalizedEvents) {
-      const age = now - event.ts * 1000;
-      if (age >= -30000 && age <= ACTIVE_AGENT_MS) {
-        agentSeenRef.current.set(agentLane(event.agent), Math.max(event.ts * 1000, agentSeenRef.current.get(agentLane(event.agent)) ?? 0));
-      }
+    // Presence pings and file access both prove an agent is alive, so the roster
+    // is fed by every event. Nothing else on screen may answer "how many agents".
+    if (recordSightings(normalizedEvents, sightingsRef.current, now)) {
+      setRosterRevision((revision) => revision + 1);
     }
-    if (agentSeenRef.current.size !== activeAgentCountBefore) setActivityTick((tick) => tick + 1);
 
     // Presence and command/build telemetry still updates the agent heartbeat,
     // but only verified file access is allowed to occupy the visual trace or
@@ -351,35 +353,12 @@ export default function App() {
     return c;
   }, [data]);
 
-  const staticGraphMetrics = useMemo(() => ({
+  const deckGraph = useMemo(() => ({
     nodes: data?.nodes.length ?? 0,
     links: data?.links.length ?? 0,
     knowledge: data?.nodes.filter((node) => node.kind === 'page').length ?? 0,
-  }), [data]);
-
-  const activeAgentCount = useMemo(() => {
-    const now = Date.now();
-    return [...agentSeenRef.current.values()].filter((seenAt) => now - seenAt <= ACTIVE_AGENT_MS).length;
-  // activityTick expires stale sessions even when the stream goes quiet.
-  }, [activityRevision, activityTick]);
-
-  const graphMetrics = { ...staticGraphMetrics, agents: activeAgentCount };
-
-  const currentActivity = useMemo(() => {
-    const now = Date.now();
-    const recent = events.filter((event) => {
-      const age = now - event.ts * 1000;
-      return age >= -30000 && age <= ACTIVE_AGENT_MS;
-    });
-    return fairFileActivity(recent, 12);
-  // activityTick expires stale rows even when no new event arrives. This is a file/action
-  // sequence with a reserved lane per agent, so one busy process cannot hide another.
-  }, [activityTick, events]);
-
-  const currentAgentCount = useMemo(
-    () => new Set(currentActivity.map((item) => agentLane(item.event.agent))).size,
-    [currentActivity],
-  );
+    generatedAt: graphGeneratedAt,
+  }), [data, graphGeneratedAt]);
 
   const neighbors = useMemo(() => {
     if (!selected || !data) return [];
@@ -638,54 +617,21 @@ export default function App() {
         <p>קוד, החלטות וידע אנושי מחוברים למפה אחת — Claude ו‑Codex קוראים וכותבים לאותו מקור אמת.</p>
       </section>
 
-      <section className="brain-metrics" aria-label="מדדי הזיכרון המשותף">
-        <div><strong>{graphMetrics.nodes.toLocaleString()}</strong><span>NEURONS</span></div>
-        <div><strong>{graphMetrics.links.toLocaleString()}</strong><span>SYNAPSES</span></div>
-        <div><strong>{graphMetrics.knowledge.toLocaleString()}</strong><span>MEMORIES</span></div>
-        <div><strong>{graphMetrics.agents || (STATIC_PREVIEW ? 2 : 0)}</strong><span>AGENTS</span></div>
-      </section>
-
-      <section
-        className={`${currentActivity.length ? 'live-trace has-activity' : 'live-trace is-idle'}${liveTraceCollapsed ? ' collapsed' : ''}`}
-        aria-label="קבצים שנגישים כעת על ידי הסוכנים"
-        data-testid="live-trace"
-      >
-          <div className="live-trace-head">
-            <span dir="ltr">{currentAgentCount || 0} AGENTS · LIVE FILE ACCESS</span>
-            <span className={wsUp ? 'live-stream up' : 'live-stream'}>{wsUp ? 'STREAMING' : 'RECONNECTING'}</span>
-            <button
-              type="button"
-              className="live-trace-toggle"
-              data-testid="live-trace-toggle"
-              aria-expanded={!liveTraceCollapsed}
-              aria-label={liveTraceCollapsed ? 'פתיחת חלון הקבצים החיים' : 'מזעור חלון הקבצים החיים'}
-              onClick={() => setLiveTraceCollapsed((collapsed) => !collapsed)}
-            >
-              {liveTraceCollapsed ? 'פתח' : 'מזער'}
-            </button>
-            <i aria-hidden="true" />
-          </div>
-          {currentActivity.map(({ event, count, key }) => (
-            <div
-              className={`live-trace-row agent-${agentLane(event.agent)}`}
-              key={key}
-              style={{ borderInlineStartColor: liveAgentPalette(event.agent).trace }}
-            >
-              <span className="live-agent">{event.agent || 'AGENT'}</span>
-              <span className="live-action">{liveAction(event.tool)}</span>
-              <span className="live-file" title={event.path}>{liveFilePath(event)}</span>
-              <span className={count > 1 ? 'live-repeat active' : 'live-repeat'} aria-label={`${count} גישות לקובץ`}>×{count}</span>
-            </div>
-          ))}
-          {!currentActivity.length ? (
-            <div className="live-trace-empty">החיבור פעיל · ממתין לפעולת סוכן</div>
-          ) : null}
-        </section>
+      <LiveDeck
+        sightings={sightingsRef.current}
+        events={events}
+        revision={rosterRevision}
+        wsUp={wsUp}
+        preview={STATIC_PREVIEW}
+        graph={deckGraph}
+        collapsed={liveTraceCollapsed}
+        onToggleCollapsed={() => setLiveTraceCollapsed((collapsed) => !collapsed)}
+      />
 
       <nav className="camera-dock" aria-label={mode === '3d' ? 'זוויות ואינטראקציה במוח תלת ממד' : 'ניווט ואינטראקציה במפת המוח'} data-testid="camera-dock">
         {mode === '3d' ? (
           <>
-            <button type="button" className="camera-button zoom-button" data-testid="camera-zoom-in" aria-label="התקרבות למוח" onClick={() => zoomCamera3D(0.78)}>+</button>
+            <button type="button" className="camera-button zoom-button" data-testid="camera-zoom-in" aria-label="התקרבות למוח" onClick={() => zoomCamera3D(-1)}>+</button>
             {([
               ['whole', 'כל המוח'],
               ['left', 'שמאל'],
@@ -703,8 +649,8 @@ export default function App() {
               </button>
             ))}
             <button type="button" className="camera-button" data-testid="field-reset" onClick={resetInteractiveField}>איפוס שדה</button>
-            <button type="button" className="camera-button zoom-button" data-testid="camera-zoom-out" aria-label="התרחקות מהמוח" onClick={() => zoomCamera3D(1.28)}>−</button>
-            <span className="camera-hint" aria-hidden="true">DRAG NEURON · COLLISION FIELD SETTLES · DRAG SPACE TO ORBIT · SCROLL ZOOM</span>
+            <button type="button" className="camera-button zoom-button" data-testid="camera-zoom-out" aria-label="התרחקות מהמוח" onClick={() => zoomCamera3D(1)}>−</button>
+            <span className="camera-hint" aria-hidden="true">SCROLL FLIES IN · DRAG LOOKS AROUND · RIGHT-DRAG PANS · DRAG A NEURON MOVES IT</span>
           </>
         ) : (
           <>

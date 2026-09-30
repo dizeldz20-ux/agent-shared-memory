@@ -119,6 +119,21 @@ class SkillRouterTests(unittest.TestCase):
 
     # ------------------------------------------------------------------ build
 
+    def test_build_reads_a_skill_saved_with_windows_line_endings(self):
+        # A SKILL.md written on Windows (or checked out with autocrlf) ends every line in CRLF; the
+        # frontmatter must still parse, or the router goes silent for that skill.
+        d = self.skills / "crlf-skill"
+        d.mkdir(parents=True)
+        text = skill_md('Use when the user says "reconcile the ledger" or asks for a ledger reconciliation.')
+        (d / "SKILL.md").write_bytes(text.replace("\n", "\r\n").encode("utf-8"))
+        block = self.skills / "crlf-block"
+        block.mkdir(parents=True)
+        text = skill_md('Use when the user says "rotate the keys" for the vault.', block=True)
+        (block / "SKILL.md").write_bytes(text.replace("\n", "\r\n").encode("utf-8"))
+        by = {e["id"]: e for e in self.build()["skills"]}
+        self.assertIn("reconcile the ledger", by["crlf-skill"]["strong"])
+        self.assertIn("rotate the keys", by["crlf-block"]["strong"])
+
     def test_build_parses_frontmatter_and_derives_evidence(self):
         m = self.build()
         by = {e["id"]: e for e in m["skills"]}

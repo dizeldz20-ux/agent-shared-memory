@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 const root = new URL('../', import.meta.url);
-const [app, brain, brain2d, brain3d, css, shot, html, feed, liveActivity, useLive, liveBatch, livePalette] = await Promise.all([
+const [app, brain, brain2d, brain3d, css, shot, html, feed, liveActivity, useLive, liveBatch, livePalette, deck, roster] = await Promise.all([
   readFile(new URL('src/App.tsx', root), 'utf8'),
   readFile(new URL('src/Brain.tsx', root), 'utf8'),
   readFile(new URL('src/Brain2D.tsx', root), 'utf8'),
@@ -16,6 +16,8 @@ const [app, brain, brain2d, brain3d, css, shot, html, feed, liveActivity, useLiv
   readFile(new URL('src/useLive.ts', root), 'utf8'),
   readFile(new URL('src/liveBatch.ts', root), 'utf8'),
   readFile(new URL('src/liveAgentPalette.ts', root), 'utf8'),
+  readFile(new URL('src/LiveDeck.tsx', root), 'utf8'),
+  readFile(new URL('src/liveRoster.ts', root), 'utf8'),
 ]);
 
 test('App exposes a media-query-backed motion contract to both renderers', () => {
@@ -45,6 +47,12 @@ test('MAP and CORTEX paint every node and data link independently from pointer L
   const drawNode = brain2d.slice(drawNodeStart, drawNodeEnd);
   assert.doesNotMatch(drawNode, /if\s*\(\s*!nodeIsInteractive/, 'pointer LOD must never hide painted neurons');
   assert.match(drawNode, /ctx\.arc\(n\.x!, n\.y!, microRadius/);
+
+  // The sprite is viewport-bounded, the painting is not: a node outside the view
+  // still gets its micro dot, so culling can never remove a neuron from the map.
+  assert.match(brain2d, /const nearView = !view/);
+  assert.match(brain2d, /const detailed = \(nearView && \(scale >= 2\.35/);
+  assert.match(brain2d, /visibleRectRef\.current = null;\s*\/\/ no transform to read/);
   assert.match(brain2d, /const canvasGraph = useMemo\(\(\) => \(\{ nodes: graph\.nodes, links: \[\] \}\)/);
   assert.match(brain2d, /const drawBackgroundLinks = useCallback/);
   assert.match(brain2d, /layout: 'neural-atlas'/);
@@ -115,30 +123,79 @@ test('CORTEX coordinates are pinned before graphData is committed and data-only 
   assert.doesNotMatch(brain2d, /setTimeout\([\s\S]{0,180}applyCorticalRingPins/);
 });
 
-test('CONNECTOME permits deep interior navigation without cursor-directed focus', () => {
-  assert.match(brain, /const CAMERA_MIN_DISTANCE = 8/);
+test('CONNECTOME can be flown through, not merely approached', () => {
+  assert.match(brain, /const CAMERA_MIN_DISTANCE = 1\.2/);
   assert.match(brain, /camera\.near = 0\.05/);
   assert.match(brain, /controls\.minDistance = CAMERA_MIN_DISTANCE/);
-  assert.match(brain, /controls\.zoomToCursor = false/);
   assert.match(brain, /side:\s*FrontSide/);
+
+  // A dolly can only approach its target, so any floor is a wall you hit and
+  // the interior freezes there. Inside the shell the wheel translates the camera
+  // along its view direction and carries the pivot with it — no floor exists.
+  assert.match(brain, /const INTERIOR_PIVOT_DISTANCE = 45/);
+  assert.match(brain, /camera\.position\.addScaledVector\(forward, event\.deltaY < 0 \? magnitude : -magnitude\)/);
+  assert.match(brain, /controls\.target\.copy\(camera\.position\)\.addScaledVector\(forward, INTERIOR_PIVOT_DISTANCE\)/);
+  assert.match(brain, /host\.addEventListener\('wheel', onWheel, \{ passive: false, capture: true \}\)/);
+  // Leaving the shell must not hand the dolly a pivot stranded in open space.
+  assert.match(brain, /controls\.target\.set\(0, 0, 0\)/);
+
+  // Outside, the wheel steers at what you aimed at instead of converging on one
+  // fixed point forever. This was off because zoom-to-cursor fed a hover handler
+  // that rebuilt focus and reframed the camera; hover is visual-only now.
+  assert.match(brain, /controls\.zoomToCursor = true/);
+  assert.match(brain, /const focusId = selected\?\.id \?\? null;/);
+
+  assert.match(app, /SCROLL FLIES IN · DRAG LOOKS AROUND · RIGHT-DRAG PANS/);
 });
 
 test('live file trace is persistent and keeps a multi-file sequence', () => {
-  assert.match(app, /LIVE FILE ACCESS/);
-  assert.match(liveActivity, /export function fairFileActivity/);
+  assert.match(liveActivity, /export function laneFileActivity/);
   assert.match(liveActivity, /export function isFileAccessEvent/);
-  assert.match(app, /fairFileActivity\(recent, 12\)/);
-  assert.match(app, /reserved lane per agent/);
-  assert.match(app, /agent-\$\{agentLane\(event\.agent\)\}/);
-  assert.match(app, /borderInlineStartColor:\s*liveAgentPalette\(event\.agent\)\.trace/);
-  assert.match(app, /className=\{count > 1 \? 'live-repeat active'/);
-  assert.match(app, /title=\{event\.path\}>\{liveFilePath\(event\)\}/);
+  assert.match(deck, /laneFileActivity\(windowed, FILES_PER_AGENT\)/);
+  assert.match(deck, /className=\{count > 1 \? 'live-repeat active num'/);
+  assert.match(deck, /title=\{event\.path\}>\{liveFilePath\(event\)\}/);
+  assert.match(deck, /agent-\$\{agent\.lane\}/);
+  assert.match(deck, /liveAgentPalette\(agent\.agent\)\.trace/);
   assert.match(feed, /\{liveFilePath\(e\)\}/);
   assert.doesNotMatch(feed, /slice\(0, 80\)/);
-  assert.doesNotMatch(app, /\{currentActivity\.length \? \(\s*<section/);
   assert.match(css, /\.live-trace-empty/);
   assert.match(livePalette, /claude:[\s\S]*soma:\s*'#8fe0b5'[\s\S]*route:\s*'#56ad85'/);
   assert.doesNotMatch(livePalette, /#d7a8c0|#9f6b86|#f3d5e3|#c789a6/);
+});
+
+test('one roster answers "how many agents", and every claim carries its age', () => {
+  // The strip and the trace header are rendered by one component from one clock.
+  // Two independent readings a screen apart is the defect this replaced.
+  assert.match(deck, /const agentsReading = connected \? `\$\{liveCount\}\/\$\{roster\.length\}` : '—'/);
+  assert.ok((deck.match(/\{agentsReading\}/g) ?? []).length >= 2, 'strip and trace must print the same reading');
+  assert.doesNotMatch(app, /ACTIVE_AGENT_MS|agentSeenRef|currentAgentCount/);
+  assert.match(app, /recordSightings\(normalizedEvents, sightingsRef\.current, now\)/);
+
+  // An age on every row, refreshed every second — a row with no age is a row
+  // claiming to be happening now.
+  assert.match(deck, /setInterval\(\(\) => setNow\(Date\.now\(\)\), 1000\)/);
+  assert.match(deck, /\{formatAge\(agent\.ageMs\)\}/);
+  assert.match(deck, /\{formatAge\(Math\.max\(0, now - event\.ts \* 1000\)\)\}/);
+
+  // Graded window: a reserved row belongs to an agent touching files now.
+  assert.match(roster, /export const AGENT_LIVE_MS = 15_000/);
+  assert.match(roster, /export const AGENT_WINDOW_MS = 90_000/);
+  assert.doesNotMatch(liveActivity, /fairFileActivity/);
+
+  // Inference is drawn differently from a report, and unknown is not zero.
+  assert.match(deck, /data-source=\{agent\.inferred \? 'inferred' : 'hook'\}/);
+  assert.match(css, /\.agent-dot\[data-source="inferred"\]/);
+  assert.match(css, /\[data-state="unknown"\]/);
+  assert.match(deck, /const agentsState = connected \? \(liveCount \? 'live' : 'idle'\) : 'unknown'/);
+
+  // One state table drives colour, glow and pulse; nothing may fork it.
+  for (const token of ['--state-ink', '--state-edge', '--state-glow', '--state-dim']) {
+    assert.ok(css.includes(token), `state table must define ${token}`);
+  }
+  // Mixed values take their direction from their own first strong character.
+  assert.match(css, /\.live-file \{[^}]*unicode-bidi: plaintext/);
+  // The graph on screen is a snapshot and must say how old it is.
+  assert.match(deck, /daysSince\(graph\.generatedAt, now\)/);
 });
 
 test('WebSocket file activity is losslessly coalesced before React rendering', () => {

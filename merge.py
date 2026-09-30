@@ -6,11 +6,13 @@ Stdlib only. Configure sources.json (see sources.example.json), then:
     uv run python merge.py
 """
 import json
+import re
 import sys
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
+from asm_text import field_words
 from source_manifest import expanded_sources
 
 ROOT = Path(__file__).resolve().parent
@@ -41,7 +43,7 @@ LANG_BY_EXT = {
 def describe_directories(nodes: dict[str, dict], links: list[dict]) -> int:
     """Deterministic overview for every dir/project node — size, languages, hub files and
     the vault pages that point into it. No LLM: this is what brain_context on a directory
-    returned nothing for, and what lets `brain_search("pacobot server")` land on the folder
+    returned nothing for, and what lets `brain_search("billing server")` land on the folder
     rather than on one of its 200 files. Returns the number of nodes described."""
     children: dict[str, list[str]] = defaultdict(list)
     degree: Counter[str] = Counter()
@@ -92,9 +94,80 @@ def describe_directories(nodes: dict[str, dict], links: list[dict]) -> int:
     return described
 
 
+FRONT = re.compile(r"\A---\n(.*?)\n---\n", re.S)
+CURATED_MARK = "<!-- asm:state begin"
+LIFECYCLE_KEYS = ("status", "done_at", "retired_at", "superseded_by")
+# Pages write their status in many words, often followed by a note ("done — shipped 22/09").
+# Recall only needs to know finished from retired from anything else.
+STATUS_WORDS = {"done": "done", "complete": "done", "completed": "done", "closed": "done",
+                "shipped": "done", "deployed": "done", "retired": "retired", "archived": "retired",
+                "superseded": "retired", "obsolete": "retired"}
+
+
+def normalize_status(value: str) -> str:
+    word = re.match(r"[\w-]+", value.strip().lower())
+    if not word:
+        return ""
+    return STATUS_WORDS.get(word.group(0), word.group(0))
+
+
+def page_flags(source: Path) -> dict:
+    """The lifecycle facts recall needs from a page itself: its frontmatter `status` (active,
+    done, retired) with its dates and replacement, and whether the curator keeps a
+    current-state block in it. The OKF catalog does not carry these, so they are read here.
+    A page that cannot be read has no flags."""
+    try:
+        text = source.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return {}
+    flags: dict = {}
+    front = FRONT.match(text)
+    if front:
+        for key in LIFECYCLE_KEYS:
+            found = re.search(rf"^{key}:[ \t]*(.+?)[ \t]*$", front.group(1), re.M)
+            if found:
+                value = found.group(1).strip().strip("\"'")
+                flags[key] = normalize_status(value) if key == "status" else value
+    if CURATED_MARK in text:
+        flags["curated"] = True
+    return flags
+
+
+def index_row(n: dict) -> dict:
+    """One row of brain.index.json, the compact index the prompt hook reads. The lifecycle
+    fields (u: updatedAt, y: type, s: status, c: curated) are written only when present."""
+    meta = n.get("meta") or {}
+    row = {"i": n["id"], "l": n["label"], "k": n["kind"], "p": n["path"],
+           "d": meta.get("description", ""), "t": meta.get("tags", [])}
+    if meta.get("aliases"):
+        row["a"] = meta["aliases"]
+    for short, key in (("u", "updatedAt"), ("y", "type"), ("s", "status"), ("c", "curated")):
+        if meta.get(key):
+            row[short] = meta[key]
+    return row
+
+
 def last2(rel: str) -> str:
     parts = rel.split("/")
     return "/".join(parts[-2:])
+
+
+IGNORED_VAULT_PARTS = {".git", ".obsidian", ".trash", "node_modules"}
+
+
+def unindexed_notes(vault: Path, catalog_paths: set[str]) -> list[Path]:
+    """Vault notes outside the OKF catalog that the brain still accounts for. An empty note is
+    left out: Obsidian creates one for every click on a link it cannot resolve, and it holds
+    nothing to find."""
+    notes = []
+    for note in sorted(vault.rglob("*.md")):
+        rel = norm(note.relative_to(vault))
+        if any(part in IGNORED_VAULT_PARTS for part in note.relative_to(vault).parts) or rel in catalog_paths:
+            continue
+        if rel.startswith("okf/index/") or rel == "okf/index.md" or note.stat().st_size == 0:
+            continue
+        notes.append(note)
+    return notes
 
 
 def main() -> None:
@@ -187,6 +260,9 @@ def main() -> None:
         okf_graph = json.loads((VAULT / "okf/graph.json").read_text(encoding="utf-8"))
 
         catalog_paths: set[str] = set()
+        # Real (case-preserving) paths of the page nodes, so the body index below never has
+        # to rebuild them from the lowercased `abs`.
+        page_files: dict[str, Path] = {}
 
         for c in catalog["concepts"]:
             catalog_paths.add(norm(c["path"]))
@@ -199,7 +275,11 @@ def main() -> None:
                            # tags also create xlayer edges, aliases only affect search.
                            "aliases": [c["aliases"]] if isinstance(c.get("aliases"), str)
                            else list(c.get("aliases") or []),
-                           "pageType": c.get("pageType", "")})
+                           "pageType": c.get("pageType", ""),
+                           "updatedAt": str(c.get("updatedAt") or ""),
+                           "type": str(c.get("type") or ""),
+                           **page_flags(VAULT / c["path"])})
+            page_files[vid] = VAULT / c["path"]
             links.append({"source": "vault:__root__", "target": vid, "type": "contains"})
             tags = {t.lower() for t in c.get("tags", [])}
             for layer, layer_tags in XLAYER_TAGS.items():
@@ -222,20 +302,18 @@ def main() -> None:
                 links.append({"source": s, "target": t, "type": "link"})
 
         # OKF is the semantic index, but the brain must still account for notes that are
-        # intentionally outside it (drafts, AGENTS guidance, historical material). Only
-        # path metadata is indexed here; note bodies never enter brain.json.
-        ignored_parts = {".git", ".obsidian", ".trash", "node_modules"}
-        for note in sorted(VAULT.rglob("*.md")):
+        # intentionally outside it (drafts, AGENTS guidance, historical material). Bodies
+        # stay out of brain.json; they are written to data/brain.pages.json below.
+        for note in unindexed_notes(VAULT, catalog_paths):
             rel = norm(note.relative_to(VAULT))
-            if any(part in ignored_parts for part in note.relative_to(VAULT).parts):
-                continue
-            if rel in catalog_paths or rel.startswith("okf/index/") or rel == "okf/index.md":
-                continue
             nid = f"vault:file:{rel}"
             add_node(nid, label=note.name, layer="vault", kind="page", path=rel,
-                     abs=norm(note), meta={"description": "", "tags": [], "pageType": "unindexed"})
+                     abs=norm(note), meta={"description": "", "tags": [], "pageType": "unindexed",
+                                           **page_flags(note)})
+            page_files[nid] = note
             links.append({"source": "vault:__root__", "target": nid, "type": "contains"})
     else:
+        page_files = {}
         print("no vault configured (or okf/catalog.json missing) — building a code-only brain")
 
     # drop links pointing at unknown nodes (safety)
@@ -259,15 +337,32 @@ def main() -> None:
 
     # Compact index for the UserPromptSubmit hook: it runs synchronously in front of every
     # prompt, so it must not parse the full graph (links are ~80% of the bytes).
-    index = [
-        {"i": n["id"], "l": n["label"], "k": n["kind"], "p": n["path"],
-         "d": (n.get("meta") or {}).get("description", ""),
-         "t": (n.get("meta") or {}).get("tags", []),
-         **({"a": al} if (al := (n.get("meta") or {}).get("aliases")) else {})}
-        for n in nodes.values() if n["kind"] in ("page", "file", "dir")
-    ]
+    index = [index_row(n) for n in nodes.values() if n["kind"] in ("page", "file", "dir")]
     (ROOT / "data/brain.index.json").write_text(
         json.dumps(index, ensure_ascii=False), encoding="utf-8")
+
+    # Body index for the vault. Until this file existed brain_search read only the
+    # frontmatter — roughly 1.4% of what is actually written in the vault — so a page could
+    # document `robocopy` or `readlink -f` in a table and still be unreachable by that word.
+    # Word sets, not prose: the server needs the set to match against, and deduplicating
+    # inside a page is most of the size saving. Kept out of brain.json because the 3D UI
+    # and the prompt hook both parse that file and neither one searches bodies.
+    front = re.compile(r"\A---\n.*?\n---\n", re.S)
+    pages_index: dict[str, list[str]] = {}
+    unreadable = 0
+    for nid, source in sorted(page_files.items()):
+        try:
+            body = source.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            unreadable += 1            # a note deleted between the scan and here
+            continue
+        words = field_words(front.sub("", body))
+        if words:
+            pages_index[nid] = sorted(words)
+    (ROOT / "data/brain.pages.json").write_text(
+        json.dumps(pages_index, ensure_ascii=False), encoding="utf-8")
+    print(f"brain.pages.json: {len(pages_index)} page bodies indexed"
+          + (f", {unreadable} unreadable" if unreadable else ""))
     print(f"directories described: {described}")
     print(f"brain.json: {len(nodes)} nodes {len(links)} links "
           f"(kinds: {out['counts']}, xlayer: {xlayer_count})")

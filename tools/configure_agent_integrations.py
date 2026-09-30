@@ -90,7 +90,6 @@ def merge_mcp(document: dict[str, Any], entry: dict[str, Any]) -> None:
     servers = document.setdefault("mcpServers", {})
     if not isinstance(servers, dict):
         raise ConfigError("mcpServers must be a JSON object")
-    servers.pop("c2b", None)
     servers["asm"] = entry
 
 
@@ -279,7 +278,6 @@ def configure(home: Path, runtime: Path, uv_bin: str, include_legacy_kimi: bool 
     permissions = permission_root.setdefault("allow", [])
     if not isinstance(permissions, list):
         raise ConfigError("Claude permissions.allow must be a JSON array")
-    permissions[:] = [value for value in permissions if value != "mcp__c2b__*"]
     if "mcp__asm__*" not in permissions:
         permissions.append("mcp__asm__*")
     merge_grouped_hooks(claude, runtime, include_skill_router=True)

@@ -1,0 +1,64 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: jobs/package-lock.json
+
+      # UTF-8 mode for the test process only: the tests read Hebrew through text-mode pipes. The
+      # install below runs without it, so the product's own UTF-8 handling is what gets tested.
+      - name: Python tests
+        env:
+          PYTHONUTF8: '1'
+        run: uv run python -m unittest discover -s tests -v
+
+      - name: Jobs dependencies
+        run: npm ci --prefix jobs
+      - name: Typecheck
+        run: npm --prefix jobs run typecheck
+      - name: Vitest
+        working-directory: jobs
+        run: npx vitest run
+
+      - name: Graphify
+        shell: bash
+        run: |
+          uv tool install graphifyy
+          uv tool dir --bin >> "$GITHUB_PATH"
+
+      # A real install into a throwaway home, the way a new user runs it; the client CLIs
+      # (codex, grok) are not on the runner.
+      - name: Install into a throwaway home
+        shell: bash
+        run: |
+          home="$RUNNER_TEMP/asm-home"
+          mkdir -p "$home"
+          # A second source under a Hebrew folder name: a non-ASCII path must survive the refresh.
+          hebrew="$RUNNER_TEMP/פרויקט"
+          mkdir -p "$hebrew" && printf 'def hello():\n    return 1\n' > "$hebrew/hello.py"
+          printf '{"vault": null, "layers": {"asm": "ASM"}, "sources": [{"layer": "asm", "raw": "asm-self", "base": ".", "prefix": "asm/"}, {"layer": "asm", "raw": "hebrew", "base": "%s", "prefix": "he/"}]}\n' "$(cd "$hebrew" && pwd -W 2>/dev/null || pwd)" > sources.json
+          HOME="$home" USERPROFILE="$home" ASM_SKIP_CLIENT_CLI=1 npm --prefix jobs run asm:install
+          echo "ASM_E2E_HOME=$home" >> "$GITHUB_ENV"
+
+      - name: The installed ASM answers
+        working-directory: jobs
+        shell: bash
+        run: |
+          test -n "$ASM_E2E_HOME"   # an unset home would skip every e2e test and still pass
+          HOME="$ASM_E2E_HOME" USERPROFILE="$ASM_E2E_HOME" ASM_E2E_UNICODE_SOURCE=he/ npx vitest run src/install/install.e2e.test.ts

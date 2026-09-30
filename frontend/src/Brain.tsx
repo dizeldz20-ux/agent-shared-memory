@@ -85,8 +85,20 @@ const CORTICAL_FIELD = corticalFieldPositions();
 const CORTICAL_FIBERS = corticalFiberPositions();
 const CORTICAL_MESH = corticalMeshData();
 const CORTICAL_FIELD_DIGEST = fieldDigest(CORTICAL_FIELD);
-const CAMERA_MIN_DISTANCE = 8;
+/**
+ * How close the camera may get to its orbit target.
+ *
+ * This was 105 (a shell you could never get inside), then 8 — and 8 is still a
+ * wall: measured on the live graph, the distance pinned at exactly 8.00 and
+ * seventy-two further wheel notches changed the camera by nothing at all, which
+ * is why the interior reads as a frozen photograph. Paired with `zoomToCursor`
+ * below, the target advances with you, so this is a floor on how close you may
+ * come to the thing you aimed at rather than a floor on how deep you may go.
+ */
+const CAMERA_MIN_DISTANCE = 1.2;
 const BRAIN_INTERIOR_RADIUS = 175;
+/** How far ahead of the camera the orbit pivot is held while flying inside. */
+const INTERIOR_PIVOT_DISTANCE = 45;
 const LIVE_SEGMENT_CAPACITY = LIVE_SIGNAL_LIMITS.maxSources * LIVE_SIGNAL_LIMITS.maxSegmentsPerSource;
 const LIVE_TRAIL_CAPACITY = LIVE_SEGMENT_CAPACITY * LIVE_SIGNAL_LIMITS.trailPointsPerSegment;
 
@@ -1223,9 +1235,17 @@ export const Brain = memo(function Brain({
     controls.dampingFactor = 0.075;
     controls.minDistance = CAMERA_MIN_DISTANCE;
     controls.maxDistance = 1350;
-    // A stable target preserves the no-focus-glitch interaction contract while
-    // still allowing the camera to travel all the way into the shared brain.
-    if ('zoomToCursor' in controls) controls.zoomToCursor = false;
+    // The wheel travels toward the pointer instead of converging, forever, on
+    // one fixed point. With a stationary target every zoom approached the same
+    // spot in the nucleus, so "further in" was never a direction you could pick
+    // — measured: the target never moved once across a full dive.
+    //
+    // This was off because zoom-to-cursor used to feed the hover handler, which
+    // rebuilt the focus subgraph and reframed the camera, which moved the node
+    // under the cursor: the pointer/zoom feedback glitch. Hover has since been
+    // visual-only — it cannot change focus or the camera — so the loop has no
+    // source left, and the assertions below hold that shut.
+    if ('zoomToCursor' in controls) controls.zoomToCursor = true;
     const renderNavigation = () => {
       updateInteriorPresentation();
       graphInstance?.resumeAnimation?.();
@@ -1238,6 +1258,54 @@ export const Brain = memo(function Brain({
       controls.removeEventListener?.('change', renderNavigation);
     };
   }, [graphInstance, motionEnabled, updateInteriorPresentation]);
+
+  // ── flying, once you are inside ──────────────────────────────────────────
+  // A wheel that dollies can only ever approach its orbit target, so "further
+  // in" stops existing the moment you arrive: measured on the live graph, the
+  // distance pinned at the floor and seventy-two more notches moved the camera
+  // by exactly nothing, which is why the interior read as a frozen photograph.
+  // Lowering the floor only moved the wall. Inside the shell the wheel instead
+  // translates the camera along its view direction and carries the orbit pivot
+  // with it, so there is no floor to reach and orbiting turns your head rather
+  // than swinging you around a point on the far side of the brain.
+  useEffect(() => {
+    const fg = graphInstance;
+    const canvas = fg?.renderer?.()?.domElement as HTMLCanvasElement | undefined;
+    const host = canvas?.parentElement;
+    if (!canvas || !host) return;
+    const onWheel = (event: WheelEvent) => {
+      const camera = fg?.camera?.();
+      const controls = fg?.controls?.();
+      if (!camera?.position || !controls?.target) return;
+      // Outside the shell the normal dolly still applies, so you can aim at a
+      // lobe and approach it. Flying back out through the shell hands it back —
+      // but never with the pivot the flight left 45 units ahead in open space,
+      // because dollying toward THAT is how you get stranded staring at nothing.
+      // Re-aiming it at the brain is a user-initiated gesture, not the camera
+      // moving on its own, so it does not touch the hover contract.
+      if (camera.position.length() >= BRAIN_INTERIOR_RADIUS) {
+        if (controls.target.length() >= BRAIN_INTERIOR_RADIUS) {
+          controls.target.set(0, 0, 0);
+          controls.update?.();
+          wakeRenderer();
+        }
+        return;
+      }
+      // Capture phase on the host: OrbitControls listens on the canvas itself,
+      // so stopping here is what keeps both handlers from acting on one notch.
+      event.preventDefault();
+      event.stopPropagation();
+      const forward = camera.getWorldDirection(new Vector3());
+      const magnitude = Math.min(18, Math.max(2, Math.abs(event.deltaY) * 0.06));
+      camera.position.addScaledVector(forward, event.deltaY < 0 ? magnitude : -magnitude);
+      controls.target.copy(camera.position).addScaledVector(forward, INTERIOR_PIVOT_DISTANCE);
+      controls.update?.();
+      updateInteriorPresentation();
+      wakeRenderer();
+    };
+    host.addEventListener('wheel', onWheel, { passive: false, capture: true });
+    return () => host.removeEventListener('wheel', onWheel, { capture: true });
+  }, [graphInstance, updateInteriorPresentation, wakeRenderer]);
 
   useEffect(() => {
     const canvas = graphInstance?.renderer?.()?.domElement as HTMLCanvasElement | undefined;

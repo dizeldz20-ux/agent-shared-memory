@@ -1,16 +1,16 @@
 [
  {
-  "text": "תבדוק את הסוויפר ב-AWS בפרודקשן",
+  "text": "תבדוק את הסורק ב-AWS בפרודקשן",
   "tokens": [
-   "סוויפר",
+   "סורק",
    "aws",
    "פרודקשן"
   ]
  },
  {
-  "text": "Fix the sweeper deploy scripts, please!",
+  "text": "Fix the scanner deploy scripts, please!",
   "tokens": [
-   "sweeper",
+   "scanner",
    "deploy",
    "scripts"
   ]
@@ -40,10 +40,10 @@
   "tokens": []
  },
  {
-  "text": "ה-sweeper מול Vocaly",
+  "text": "ה-scanner מול Zenith",
   "tokens": [
-   "sweeper",
-   "vocaly"
+   "scanner",
+   "zenith"
   ]
  },
  {

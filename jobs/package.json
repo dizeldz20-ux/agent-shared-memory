@@ -1,0 +1,27 @@
+{
+  "name": "asm-jobs",
+  "private": true,
+  "version": "0.1.0",
+  "description": "ASM background jobs: the janitor (cleanup layer), the curator (learning layer) and the recall benchmark.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "preasm:refresh": "tsc -p tsconfig.build.json",
+    "asm:refresh": "node dist/refresh/cli.js",
+    "preasm:install": "tsc -p tsconfig.build.json",
+    "asm:install": "node dist/install/cli.js",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.4",
+    "typescript": "~5.8.0",
+    "vitest": "^3.2.7"
+  },
+  "dependencies": {
+    "zod": "^3.25.76"
+  }
+}

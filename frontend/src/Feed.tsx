@@ -1,6 +1,7 @@
 import type { LiveEvent } from './types';
 import { LAYER_COLORS } from './types';
 import { liveEventKey, liveFilePath } from './liveActivity';
+import { isInferred } from './liveRoster';
 
 interface Props {
   events: LiveEvent[];
@@ -42,6 +43,9 @@ export function Feed({ events, sessions, sessionFilter, onSessionFilter, onJump 
           >
             <span className="layer-swatch" style={{ backgroundColor: LAYER_COLORS[e.layer] ?? '#9EA5AD' }} aria-hidden="true" />
             <span className="feed-agent">{e.agent || 'AGENT'}</span>
+            {isInferred(e.source) ? (
+              <span className="feed-source" title="ASM גזר את הפעילות מקריאת קובץ rollout — לא דווחה על ידי hook">rollout</span>
+            ) : null}
             <span className="feed-tool">{e.tool}</span>
             <span className="feed-label" title={e.path}>{liveFilePath(e)}</span>
             <span className="feed-time">{fmtTime(e.ts)}</span>

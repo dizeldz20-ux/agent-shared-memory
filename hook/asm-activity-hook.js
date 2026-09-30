@@ -91,7 +91,7 @@ function normalizeEvent(payload) {
 }
 
 function isAsmTool(value) {
-  return /^(?:mcp__)?(?:asm|c2b)__/.test(String(value || ''));
+  return /^(?:mcp__)?asm__/.test(String(value || ''));
 }
 
 function cleanCandidate(value) {
@@ -101,7 +101,7 @@ function cleanCandidate(value) {
     .replace(/:\d+(?::\d+)?$/, '');
   // Shell commands pass `~/x` unexpanded; resolving it against cwd fabricated paths like
   // <cwd>/~/.asm/pending.jsonl that then entered the graph-matching pipeline as files.
-  return /^~(?:[\/\\]|$)/.test(cleaned) ? os.homedir() + cleaned.slice(1) : cleaned;
+  return /^~(?:[\/\\]|$)/.test(cleaned) ? path.join(os.homedir(), cleaned.slice(1)) : cleaned;
 }
 
 // Mutation targets that are never project files: device nodes, `date +%Y…` format strings
@@ -113,13 +113,19 @@ const TEMP_TREE = /^(?:\/private)?(?:\/tmp\/|\/var\/folders\/)/;
 
 // macOS reports the same temp tree as /tmp and /private/tmp depending on who resolved it.
 const canonical = (value) => String(value || '').replace(/^\/private(?=\/)/, '');
+// Windows paths compare without regard to case or separator.
+const comparable = (value) => {
+  const slashed = canonical(value).replace(/\\/g, '/').replace(/\/+$/, '');
+  return process.platform === 'win32' ? slashed.toLowerCase() : slashed;
+};
+const within = (value, root) => Boolean(root) && comparable(value).startsWith(`${comparable(root)}/`);
 
 function isJunkMutation(candidate, resolved, cwd) {
   // `+%Y%m%d` is a date format; `+page.svelte` is a real SvelteKit file.
   if (/^\+%/.test(candidate) || resolved.startsWith('/dev/')) return true;
-  if (!TEMP_TREE.test(resolved)) return false;
-  const root = canonical(cwd).replace(/[\/\\]+$/, '');
-  return !(root && canonical(resolved).startsWith(`${root}/`));
+  // The OS temp folder is caught wherever it lives: Windows keeps it under the user profile.
+  if (!TEMP_TREE.test(resolved) && !within(resolved, os.tmpdir())) return false;
+  return !within(resolved, cwd);
 }
 
 function existingFile(value, cwd) {
@@ -191,6 +197,101 @@ function shellWords(segment) {
   return words;
 }
 
+// Shell data — quoted strings, escaped characters and heredoc bodies — is text, not syntax.
+// A `>` inside `jq '… > 1'`, `python3 -c "… > 1"` or a heredoc of Python code is a
+// comparison; read as a redirect it marked phantom files named `1` and `30d` as written,
+// and the memory gate then blocked read-only sessions over them. Masking keeps every
+// index, so an operator found in the masked text is read back from the original (a
+// redirect target may itself be quoted). With maskQuotes=false only heredoc bodies and
+// their delimiter lines are blanked, which is the view commands are parsed from.
+function maskShellData(command, maskQuotes = true) {
+  const source = String(command || '');
+  const out = source.split('');
+  const blank = (from, to) => { for (let k = from; k < to; k += 1) out[k] = ' '; };
+  const pending = [];
+  let i = 0;
+  while (i < source.length) {
+    const ch = source[i];
+    if (ch === '\\') {
+      if (maskQuotes) blank(i, i + 2);
+      i += 2;
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      let j = i + 1;
+      while (j < source.length && source[j] !== ch) j += (ch === '"' && source[j] === '\\') ? 2 : 1;
+      if (maskQuotes) blank(i + 1, Math.min(j, source.length));
+      i = j + 1;
+      continue;
+    }
+    if (ch === '<' && source[i + 1] === '<' && source[i + 2] !== '<') {
+      const heredoc = /^<<(-?)[ \t]*(["']?)([A-Za-z_][\w-]*)\2/.exec(source.slice(i));
+      if (heredoc) {
+        pending.push({ strip: heredoc[1] === '-', tag: heredoc[3] });
+        i += heredoc[0].length;
+        continue;
+      }
+    }
+    if (ch === '\n' && pending.length) {
+      let j = i + 1;
+      for (const doc of pending.splice(0)) {
+        const start = j;
+        let closed = false;
+        while (j < source.length) {
+          const end = source.indexOf('\n', j);
+          const lineEnd = end < 0 ? source.length : end;
+          const line = source.slice(j, lineEnd);
+          j = end < 0 ? source.length : end + 1;
+          if ((doc.strip ? line.replace(/^\t+/, '') : line) === doc.tag) {
+            blank(start, lineEnd); // the body and its delimiter line; the newline after it stays a separator
+            closed = true;
+            break;
+          }
+        }
+        if (!closed) blank(start, source.length);
+      }
+      i = j;
+      continue;
+    }
+    i += 1;
+  }
+  return out.join('');
+}
+
+function readShellWord(source, start) {
+  const quote = source[start];
+  if (quote === '"' || quote === "'") {
+    const end = source.indexOf(quote, start + 1);
+    return end > start ? source.slice(start + 1, end) : '';
+  }
+  const word = /^[^\s|;&<>]+/.exec(source.slice(start));
+  return word ? word[0] : '';
+}
+
+// Redirection targets are writes regardless of whether the producer is echo, cat,
+// a compiler, or another command. File-descriptor redirects such as 2>&1 are excluded.
+function redirectTargets(source, masked) {
+  const targets = [];
+  for (const match of masked.matchAll(/(?:^|\s)\d*(?:>>?|<>)[ \t]*(?!&)/g)) {
+    const target = readShellWord(source, match.index + match[0].length);
+    if (target) targets.push(target);
+  }
+  return targets;
+}
+
+// Command boundaries come from the masked text, so a `;` or `|` inside quotes or a heredoc
+// never starts a new command; each segment is taken from the heredoc-free view.
+function shellSegments(masked, unbodied) {
+  const segments = [];
+  let from = 0;
+  for (const match of masked.matchAll(/&&|\|\||[|;\n]/g)) {
+    segments.push(unbodied.slice(from, match.index));
+    from = match.index + match[0].length;
+  }
+  segments.push(unbodied.slice(from));
+  return segments;
+}
+
 function shellMutationPaths(command, cwd) {
   const mutated = [];
   const push = (value) => {
@@ -198,17 +299,15 @@ function shellMutationPaths(command, cwd) {
     if (resolved && !mutated.includes(resolved)) mutated.push(resolved);
   };
 
-  // Redirection targets are writes regardless of whether the producer is echo, cat,
-  // a compiler, or another command. File-descriptor redirects such as 2>&1 are excluded.
-  for (const match of String(command || '').matchAll(/(?:^|\s)\d*(?:>>?|<>)[ \t]*(?!&)(?:"([^"]+)"|'([^']+)'|([^\s|;&]+))/g)) {
-    push(match[1] || match[2] || match[3]);
-  }
+  const source = String(command || '');
+  const masked = maskShellData(source);
+  for (const target of redirectTargets(source, masked)) push(target);
 
   // Deliberately recognize a narrow set of shell programs with unambiguous file
   // mutation semantics. Unknown commands still produce live read/access paths but do
   // not create a false memory-gate marker.
   const mutatingCommands = new Set(['rm', 'unlink', 'touch', 'truncate', 'mv', 'cp', 'install', 'tee', 'sed', 'perl']);
-  for (const segment of String(command || '').split(/(?:&&|\|\||[|;\n])/)) {
+  for (const segment of shellSegments(masked, maskShellData(source, false))) {
     const words = shellWords(segment);
     const commandIndex = words.findIndex((word) => mutatingCommands.has(path.basename(word)));
     if (commandIndex < 0) continue;
@@ -295,7 +394,8 @@ function withMarkerLock(markerPath, callback) {
       descriptor = fs.openSync(lockPath, 'wx', 0o600);
       break;
     } catch (error) {
-      if (error.code !== 'EEXIST') throw error;
+      // Windows answers EPERM, not EEXIST, while another hook is still deleting the lock.
+      if (error.code !== 'EEXIST' && !(process.platform === 'win32' && error.code === 'EPERM')) throw error;
       try {
         if (Date.now() - fs.statSync(lockPath).mtimeMs > 30000) fs.unlinkSync(lockPath);
       } catch {}
@@ -358,6 +458,7 @@ function buffer(payload) {
 let raw = '';
 process.stdin.on('data', (chunk) => (raw += chunk));
 process.stdin.on('end', async () => {
+  if (process.env.ASM_JOB === '1') return process.exit(0); // ASM's own background jobs never feed ASM's hooks
   let rawEvent;
   try {
     rawEvent = JSON.parse(raw.replace(/^\uFEFF/, ''));

@@ -1,0 +1,3 @@
+# Every text file keeps LF on every checkout: a Windows clone with core.autocrlf=true would
+# otherwise hand CRLF shell scripts to bash and different bytes to the deployed runtime.
+* text=auto eol=lf

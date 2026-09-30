@@ -14,20 +14,35 @@ from pathlib import Path
 
 
 NESTED_TOOL_RE = re.compile(r"tools\.([A-Za-z0-9_]+)\s*\(")
-ABS_PATH_RE = re.compile(r"/(?:Users|home|private|tmp|var|opt)/[^\"'`\s\\,;)}\]]+")
+# POSIX roots, and Windows drive paths (whose separators are backslashes).
+ABS_PATH_RE = re.compile(r"/(?:Users|home|private|tmp|var|opt)/[^\"'`\s\\,;)}\]]+|[A-Za-z]:[\\/][^\"'`\s,;)}\]]+")
 FILE_TOKEN_RE = re.compile(
     r"(?<![A-Za-z0-9_:/])(?:\.{0,2}/)?(?:[A-Za-z0-9_@.-]+/)*[A-Za-z0-9_@.-]+\.[A-Za-z0-9_-]{1,12}"
 )
 PATCH_PATH_RE = re.compile(r"\*\*\* (?:Add|Update|Delete) File:\s*([^\\\n\r\"'`]+)")
+
+# A rollout row older than this is history, not live activity. The offsets below
+# are the primary guard; this is the one that still holds when they are reset —
+# a truncated or rotated file sends `poll` back to byte 0 by design.
+MAX_ROLLOUT_AGE_SECONDS = 300
 
 
 def _clean_path(value: str) -> str:
     return value.strip().strip("\"'`[]{}(),;:").replace("\\/", "/")
 
 
+_JS_ESCAPE = re.compile(r"\\\\|\\n|\\t")
+
+
+def js_text(source: str) -> str:
+    """JS string escapes read in one pass, so the escaped backslash of a Windows path
+    (C:\\\\Temp\\\\tmp1) is never taken for a \\t."""
+    return _JS_ESCAPE.sub(lambda m: {"\\\\": "\\", "\\n": "\n", "\\t": " "}[m.group(0)], source)
+
+
 def code_mode_paths(source: str, cwd: str) -> list[str]:
     """Extract existing file paths from code-mode JS without evaluating the source."""
-    text = source.replace("\\n", "\n").replace("\\t", " ")
+    text = js_text(source)
     bases = [Path(cwd).expanduser()] if cwd else []
     absolute_candidates = [_clean_path(match.group(0)) for match in ABS_PATH_RE.finditer(text)]
     for candidate in absolute_candidates:
@@ -97,12 +112,15 @@ def activity_from_rollout(obj: dict, meta: dict) -> dict | None:
         source = json.dumps(source, ensure_ascii=False)
     outer_name = str(payload.get("name") or "")
     names = NESTED_TOOL_RE.findall(source) if outer_name == "exec" else [outer_name]
-    names = [name for name in names if name and not name.startswith(("mcp__asm__", "mcp__c2b__"))]
+    names = [name for name in names if name and not name.startswith("mcp__asm__")]
     if not names:
+        return None
+    ts = _timestamp(obj.get("timestamp"))
+    if time.time() - ts > MAX_ROLLOUT_AGE_SECONDS:
         return None
     cwd = str(meta.get("cwd") or "")
     return {
-        "ts": _timestamp(obj.get("timestamp")),
+        "ts": ts,
         "tool": _tool_label(names),
         "cwd": cwd,
         "session": str(meta.get("id") or payload.get("call_id") or "codex"),
@@ -157,20 +175,33 @@ class CodexRolloutWatcher:
             pass
         return {}
 
+    def _register(self, path: Path) -> None:
+        """A rollout file joins the tail at its current end, never at byte 0.
+
+        Reading an unseen file from the start republishes a whole past session as
+        live activity. Measured on this machine: 852 events out of a four-day-old
+        rollout, 150 out of another, the first time each re-entered the twelve-file
+        scan window — which `codex resume`, or any touch that lifts an old file to
+        the top by mtime, is enough to do. Only bytes appended after ASM first saw
+        the file are new; a genuinely new session reaches the window within one
+        scan (750 ms), long before its first tool call.
+        """
+        try:
+            self.offsets[path] = path.stat().st_size
+        except OSError:
+            self.offsets[path] = 0
+        self.meta[path] = self._read_meta(path)
+
     def prime(self) -> None:
         for path in self._scan(force=True):
-            try:
-                self.offsets[path] = path.stat().st_size
-            except OSError:
-                continue
-            self.meta[path] = self._read_meta(path)
+            self._register(path)
 
     def poll(self) -> list[dict]:
         activities: list[dict] = []
         for path in self._scan():
             if path not in self.offsets:
-                self.offsets[path] = 0
-                self.meta[path] = self._read_meta(path)
+                self._register(path)
+                continue  # nothing before this point is new
             try:
                 size = path.stat().st_size
                 if size < self.offsets[path]:

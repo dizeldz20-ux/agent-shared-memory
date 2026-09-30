@@ -33,7 +33,7 @@ export function sanitizeGraph(input) {
   const counters = new Map();
 
   const nodes = nodesIn.map((node, index) => {
-    const layer = node.layer === 'c2b' ? 'asm' : node.layer;
+    const layer = node.layer;
     const key = `${layer}:${node.kind}`;
     const count = (counters.get(key) ?? 0) + 1;
     counters.set(key, count);

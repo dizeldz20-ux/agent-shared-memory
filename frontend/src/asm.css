@@ -436,9 +436,69 @@ select:focus-visible {
   line-height: 1.65;
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+   The live deck — metric strip and agent trace, rendered from one snapshot.
+
+   Grammar borrowed back from the Deck's JARVIS screen, which took it from this
+   console in the first place: ONE state table drives colour, glow and pulse
+   together, panels carry a two-digit index and a chamfered leading corner, the
+   rule under a heading FADES rather than terminating (a hairline that stops dead
+   reads as the lip of a box; one that dissolves reads as a surface), and every
+   mixed value gets `unicode-bidi: plaintext` so a path or a "2/3" takes its
+   direction from its own first strong character instead of the RTL row's.
+
+   Latin and numerals may track; Hebrew may not.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* The one state table. A row's colour, its dot, its glow and whether it breathes
+   are all derived here — there is no second place to disagree with it. */
+[data-state="live"] {
+  --state-ink: #a9d7cf;
+  --state-edge: rgba(151, 215, 205, .55);
+  --state-glow: 0 0 8px rgba(151, 215, 205, .55);
+  --state-dim: 1;
+}
+
+[data-state="recent"] {
+  --state-ink: #7e918d;
+  --state-edge: rgba(151, 185, 180, .22);
+  --state-glow: none;
+  --state-dim: .62;
+}
+
+[data-state="idle"] {
+  --state-ink: #6d7d7a;
+  --state-edge: rgba(151, 185, 180, .18);
+  --state-glow: none;
+  --state-dim: .8;
+}
+
+/* Unknown is not none. It reads as absent-of-signal, never as a measured zero. */
+[data-state="unknown"] {
+  --state-ink: #8a8175;
+  --state-edge: rgba(216, 191, 145, .28);
+  --state-glow: none;
+  --state-dim: .8;
+}
+
+[data-state="warn"] {
+  --state-ink: var(--warm);
+  --state-edge: rgba(216, 191, 145, .34);
+  --state-glow: none;
+  --state-dim: 1;
+}
+
+.num {
+  direction: ltr;
+  unicode-bidi: isolate;
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
 .brain-metrics {
   position: absolute;
-  inset-block-end: 26px;
+  /* Both data panels sit on the line above the camera dock, which is centred on
+     z-index 15 and wide enough to reach under this strip below about 1300px. */
+  inset-block-end: 72px;
   inset-inline-end: 30px;
   z-index: 10;
   display: grid;
@@ -461,41 +521,223 @@ select:focus-visible {
 .brain-metrics strong { color: #b6c7c2; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 15px; font-weight: 450; }
 .brain-metrics span { margin-block-start: 5px; font-size: 8px; }
 
+/* AGENTS is the only live reading in the strip, so it is the only one that
+   carries state. `—` under an unknown state is the disconnected reading; a 0
+   there would assert that nobody started working while ASM was not looking. */
+.brain-metrics div[data-state] strong {
+  color: var(--state-ink);
+  text-shadow: var(--state-glow);
+}
+
+.brain-metrics div[data-state="live"] strong { animation: deckBreathe 2.6s ease-in-out infinite; }
+
+/* The footnote spans the strip: the graph on screen is a snapshot, and a
+   week-old one looked exactly like a fresh one until this line existed. */
+.brain-metrics .metric-footnote {
+  grid-column: 1 / -1;
+  min-height: 0;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 7px;
+  padding-block: 5px;
+  color: var(--state-ink);
+  font-size: 8px;
+  letter-spacing: .12em;
+}
+
+.brain-metrics .metric-footnote strong {
+  color: var(--state-ink);
+  font-size: 9px;
+  letter-spacing: 0;
+}
+
 .live-trace {
   position: absolute;
-  inset-block-end: 27px;
+  /* Clears the camera dock, which is centred at the bottom on z-index 15 and
+     was covering this panel's lower rows. */
+  inset-block-end: 72px;
   inset-inline-start: 30px;
   z-index: 10;
-  width: min(660px, 52vw);
-  max-height: 390px;
+  display: flex;
+  flex-direction: column;
+  width: min(600px, 48vw);
+  /* Bounded by the room that actually exists: the dock band below, the header
+     above. The subtraction used to be tuned against a 900px-tall window, which
+     made it collapse to ZERO below about 520px — the rows were still in the DOM
+     and the panel still said it had them, with nothing to read. */
+  max-height: min(330px, calc(100dvh - 168px));
   overflow: hidden;
   padding: 11px 14px 12px;
   border: 1px solid rgba(147, 190, 184, .16);
-  border-inline-start-color: rgba(147, 215, 205, .42);
+  border-inline-start-color: var(--state-edge);
   background: rgba(4, 10, 12, .84);
   box-shadow: 0 18px 54px rgba(0, 0, 0, .28);
   backdrop-filter: blur(16px) saturate(115%);
+  /* The chamfer, mirrored for RTL so the cut sits on the leading edge. Square
+     corners are this console's strongest signature; the cut is the one place
+     they are allowed to yield, and it is what keeps the panel from reading as
+     another rounded glass card. */
+  clip-path: polygon(11px 0, 100% 0, 100% calc(100% - 11px), calc(100% - 11px) 100%, 0 100%, 0 11px);
 }
 
-.live-trace-head,
-.live-trace-row { display: grid; align-items: center; }
-.live-trace-head { grid-template-columns: auto 1fr auto auto; gap: 9px; margin-block-end: 7px; color: #9cafaa; font-family: ui-monospace, monospace; font-size: 10px; letter-spacing: .13em; }
-.live-trace-head i { width: 4px; height: 4px; border-radius: 50%; background: #83b7ab; box-shadow: 0 0 8px #83b7ab; }
-.live-stream { justify-self: end; color: #6f7775; font-size: 7px; letter-spacing: .11em; }
+.live-trace-head {
+  position: relative;
+  flex: none;
+  display: grid;
+  grid-template-columns: auto auto 1fr auto auto;
+  align-items: center;
+  gap: 9px;
+  margin: 0 0 9px;
+  padding-block-end: 7px;
+  color: #9cafaa;
+  font-size: 11px;
+  font-weight: 400;
+}
+
+/* The rule dissolves at both ends instead of stopping at a border. */
+.live-trace-head::after {
+  position: absolute;
+  inset-inline: -14px;
+  inset-block-end: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(180, 216, 211, .26) 16%, rgba(180, 216, 211, .26) 84%, transparent);
+  content: "";
+}
+
+.live-trace-head > b {
+  color: var(--state-ink);
+  font-size: 12px;
+  font-weight: 450;
+  text-shadow: var(--state-glow);
+}
+
+.live-trace-head > em {
+  color: #52625f;
+  font-size: 9px;
+  font-style: normal;
+  letter-spacing: .1em;
+}
+
+.live-stream { justify-self: end; color: #6f7775; font-family: ui-monospace, monospace; font-size: 7px; letter-spacing: .11em; }
 .live-stream.up { color: #82b2a8; }
 .live-trace-toggle { padding: 2px 5px; border: 0; background: transparent; color: #71827e; font-family: system-ui, sans-serif; font-size: 9px; letter-spacing: 0; cursor: pointer; }
 .live-trace-toggle:hover { color: #c5d5d0; }
-.live-trace.collapsed { width: min(390px, 44vw); max-height: 38px; padding-block: 9px; }
-.live-trace.collapsed .live-trace-head { margin-block-end: 0; }
-.live-trace.collapsed .live-trace-row,
-.live-trace.collapsed .live-trace-empty { display: none; }
-.live-trace-row { grid-template-columns: minmax(86px, .68fr) minmax(72px, auto) minmax(240px, 2.25fr) 30px; gap: 10px; min-height: 27px; padding-inline-start: 7px; border-block-start: 1px solid rgba(180, 216, 211, .075); border-inline-start: 2px solid rgba(151, 185, 180, .22); direction: ltr; font-family: ui-monospace, monospace; font-size: 10px; }
-.live-agent { overflow: hidden; color: #9bb0ac; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The body is a Latin register — tool, path, count, age — so it reads left to
+   right even though the panel and its title are RTL. Laid out RTL it opened a
+   dead gap between the action and the path, because the path is left-aligned
+   inside a right-anchored cell. Only the quiet line and the empty state are
+   Hebrew, and each names its own direction. */
+.live-trace-body { direction: ltr; min-height: 0; overflow: auto; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+.live-trace-body::-webkit-scrollbar { width: 4px; }
+.live-trace-body::-webkit-scrollbar-thumb { background: var(--line-strong); }
+
+.live-trace.collapsed { width: min(390px, 44vw); max-height: 40px; padding-block: 9px; }
+.live-trace.collapsed .live-trace-head { margin-block-end: 0; padding-block-end: 0; }
+.live-trace.collapsed .live-trace-head::after,
+.live-trace.collapsed .live-trace-body { display: none; }
+
+/* ── an agent, then the files it is on ──────────────────────────────────── */
+/* One group per agent instead of a flat list of file rows. A flat list had to
+   decide how much of itself each agent deserved, and reserving a row for an
+   agent that went quiet a minute ago is exactly how an idle Codex came to look
+   like a working one. Here the agent states its own age once, and its files
+   hang under it — a claim that cannot be made about the wrong agent. */
+.agent-group { padding-block: 5px 6px; border-block-start: 1px solid rgba(180, 216, 211, .075); }
+.agent-group:first-child { border-block-start: 0; }
+
+.agent-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-inline-start: 7px;
+  border-inline-start: 2px solid var(--lane, var(--state-edge));
+  opacity: var(--state-dim);
+}
+
+.agent-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border: 1px solid var(--state-ink);
+  border-radius: 50%;
+  background: var(--state-ink);
+  box-shadow: var(--state-glow);
+}
+
+/* A dot that is filled says a hook reported this. A hollow one says ASM inferred
+   it by tailing a rollout file on disk — 3,456 of 3,463 recorded Codex events —
+   and the two must not be drawn alike. */
+.agent-dot[data-source="inferred"] {
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  transform: rotate(45deg);
+}
+
+.agent-group[data-state="live"] .agent-dot[data-source="hook"] { animation: deckBreathe 2.6s ease-in-out infinite; }
+
+.agent-name {
+  min-width: 0;
+  overflow: hidden;
+  color: #c3d3cf;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  letter-spacing: .07em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-source {
+  flex: none;
+  padding: 1px 5px;
+  border: 1px solid rgba(216, 191, 145, .3);
+  color: var(--warm);
+  font-family: ui-monospace, monospace;
+  font-size: 8px;
+  letter-spacing: .08em;
+}
+
+.agent-age {
+  margin-inline-start: auto;
+  color: var(--state-ink);
+  font-family: ui-monospace, monospace;
+  font-size: 9.5px;
+}
+
+.live-trace-row {
+  display: grid;
+  grid-template-columns: minmax(66px, auto) minmax(180px, 1fr) 28px 50px;
+  align-items: center;
+  gap: 10px;
+  min-height: 22px;
+  padding-inline-start: 24px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  opacity: var(--state-dim);
+}
+
+.live-trace-row.quiet { grid-template-columns: 1fr; padding-inline-start: 24px; color: #5d6d6a; }
+.live-trace-row.quiet .live-file { direction: rtl; font-family: system-ui, sans-serif; text-align: start; }
 .live-action { color: var(--warm); letter-spacing: .06em; }
-.live-file { min-width: 0; overflow: hidden; direction: ltr; color: #c0d0cc; font-size: 10.5px; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+/* Each value takes its direction from its own first strong character; without
+   it a path or an arrow renders backwards inside the RTL panel. */
+.live-file { min-width: 0; overflow: hidden; color: #c0d0cc; font-size: 10.5px; text-align: left; text-overflow: ellipsis; white-space: nowrap; unicode-bidi: plaintext; }
 .live-repeat { color: #596b68; font-size: 9px; text-align: end; }
 .live-repeat.active { color: #a9d7cf; }
-.live-trace-empty { padding-block: 6px 2px; color: #697a76; font-size: 10px; text-align: start; }
+.live-age { justify-self: end; color: #6f817d; font-size: 9px; }
+.live-trace-empty { direction: rtl; padding-block: 8px 2px; color: #697a76; font-size: 10px; text-align: start; }
+
+@keyframes deckBreathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .45; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .brain-metrics div[data-state="live"] strong,
+  .agent-group[data-state="live"] .agent-dot[data-source="hook"] { animation: none; }
+}
 
 .details,
 .activity-panel {
@@ -580,6 +822,7 @@ select:focus-visible {
 .feed-list { min-height: 0; display: flex; flex: 1; flex-direction: column; overflow-y: auto; padding-inline-end: 3px; }
 .feed-empty { padding: 20px 3px; color: var(--muted-2); font-size: 12px; }
 .feed-tool { min-height: 19px; padding-inline: 6px; border: 1px solid var(--line); color: var(--muted); font-family: ui-monospace, monospace; font-size: 9px; }
+.feed-source { flex: none; padding: 0 4px; border: 1px solid rgba(216, 191, 145, .3); color: var(--warm); font-size: 8px; }
 .feed-agent { max-width: 92px; overflow: hidden; color: #809692; font-family: ui-monospace, monospace; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .feed-label { min-width: 0; overflow: hidden; flex: 1; direction: ltr; color: #b8cbc6; font-family: ui-monospace, monospace; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .feed-time { margin-inline-start: auto; flex: 0 0 auto; color: var(--muted-2); font-family: ui-monospace, monospace; font-size: 9px; }
@@ -641,12 +884,23 @@ select:focus-visible {
   .search-control { width: min(300px, 42vw); }
   .brain-intro { inset-block-start: 150px; inset-inline-start: 18px; width: min(330px, 45vw); }
   .brain-intro p { display: none; }
-  .brain-metrics { inset-inline-end: 10px; inset-block-end: 10px; }
-  .live-trace { inset-inline-start: 10px; inset-block-end: 10px; width: min(520px, 58vw); }
+  .brain-metrics { inset-inline-end: 10px; inset-block-end: 68px; }
+  .live-trace { inset-inline-start: 10px; inset-block-end: 68px; width: min(520px, 58vw); max-height: min(280px, calc(100dvh - 150px)); }
   .brain-metrics div { min-height: 48px; padding-inline: 9px; }
   .inspector,
   .activity-panel { inset-block-start: auto; inset-block-end: 8px; inset-inline: 8px; width: auto; max-height: 58dvh; padding: 16px; }
   .activity-panel { z-index: 16; }
+  .camera-dock { max-width: calc(100% - 20px); justify-content: flex-start; overflow-x: auto; overscroll-behavior-inline: contain; scrollbar-width: none; }
+  .camera-dock::-webkit-scrollbar { display: none; }
+}
+
+/* The metric strip and the live trace are both anchored to the bottom, on
+   opposite inline edges. Measured: they start colliding just under 860px, and
+   the trace is the working surface — the counters are ambient and they are
+   still one tap away in the header's own SYNCED/OFFLINE tag. */
+@media (max-width: 860px) {
+  .brain-metrics { display: none; }
+  .live-trace { width: min(520px, 72vw); }
 }
 
 @media (max-width: 520px) {
@@ -662,16 +916,19 @@ select:focus-visible {
   .brain-intro { inset-block-start: 212px; width: calc(100% - 36px); }
   .brain-intro .eyebrow { font-size: 7px; }
   .brain-intro h1 { font-size: 25px; }
-  .brain-metrics { display: none; }
-  .live-trace { display: block; inset-inline: 10px; inset-block-end: 54px; width: auto; max-height: 104px; padding: 8px 10px; }
+  .live-trace { inset-inline: 10px; inset-block-end: 54px; width: auto; max-height: 128px; padding: 8px 10px; }
+  .live-trace-head { grid-template-columns: minmax(0, 1fr) auto auto auto; gap: 7px; }
   .live-trace-head > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .live-trace-head > em { display: none; }
   .live-trace.collapsed { inset-inline: 10px; width: auto; max-width: none; }
-  .live-trace.collapsed .live-trace-head { grid-template-columns: minmax(0, 1fr) auto auto; }
   .live-trace.collapsed .live-stream { display: none; }
-  .live-trace-row { grid-template-columns: 58px 56px minmax(110px, 1fr) 24px; min-height: 22px; gap: 6px; font-size: 8px; }
-  .live-trace-row:nth-of-type(n + 6) { display: none; }
-  .camera-dock { inset-block-end: 10px; max-width: calc(100% - 20px); justify-content: flex-start; overflow-x: auto; overscroll-behavior-inline: contain; scrollbar-width: none; }
-  .camera-dock::-webkit-scrollbar { display: none; }
+  .agent-head { gap: 6px; }
+  .agent-name { font-size: 8.5px; }
+  .live-trace-row { grid-template-columns: 54px minmax(90px, 1fr) 22px 42px; min-height: 20px; gap: 6px; padding-inline-start: 18px; font-size: 8px; }
+  /* Every agent keeps its heading; only the tail of a busy agent's file list is
+     dropped, so a narrow screen never hides that an agent is working at all. */
+  .live-trace-row:nth-of-type(n + 4) { display: none; }
+  .camera-dock { inset-block-end: 10px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

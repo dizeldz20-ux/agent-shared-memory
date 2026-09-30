@@ -1,16 +1,32 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
+import { pathToFileURL } from 'node:url';
 import ts from 'typescript';
 
+// The runtime modules are transpiled onto disk rather than into a data: URL: a
+// data: URL has no base to resolve `./liveRoster` against, so the moment one
+// runtime module imported another the whole suite failed to load.
+const outDir = await mkdtemp(path.join(tmpdir(), 'asm-live-runtime-'));
+const emitted = new Map();
+
 async function importTypeScript(relativePath) {
-  const source = await readFile(new URL(relativePath, import.meta.url), 'utf8');
-  const output = ts.transpileModule(source, {
-    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
-  }).outputText;
-  return import(`data:text/javascript;base64,${Buffer.from(output).toString('base64')}`);
+  const sourceUrl = new URL(relativePath, import.meta.url);
+  const name = path.basename(sourceUrl.pathname).replace(/\.tsx?$/, '.mjs');
+  if (!emitted.has(name)) {
+    emitted.set(name, true);
+    const output = ts.transpileModule(await readFile(sourceUrl, 'utf8'), {
+      compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+    }).outputText.replace(/(from\s*')(\.\/[\w.-]+)(')/g, '$1$2.mjs$3');
+    await writeFile(path.join(outDir, name), output, 'utf8');
+  }
+  return import(pathToFileURL(path.join(outDir, name)).href);
 }
 
+// Dependencies first: each emitted file imports its sibling by name.
+await importTypeScript('../src/liveRoster.ts');
 const live = await importTypeScript('../src/liveActivity.ts');
 const batching = await importTypeScript('../src/liveBatch.ts');
 
@@ -57,16 +73,17 @@ test('live file classification canonicalizes mapped paths and rejects shell/buil
 });
 
 test('file ledger retains distinct unmatched paths, both agents, and repeat counts', () => {
-  const rows = live.fairFileActivity([
+  const lanes = live.laneFileActivity([
     event({ ts: 5 }),
     event({ ts: 4, tool: 'Edit' }),
     event({ ts: 3, agent: 'Claude Code' }),
     event({ ts: 2, matched: false, node_id: 'ephemeral:shared', path: '/one/index.ts' }),
     event({ ts: 1, matched: false, node_id: 'ephemeral:shared', path: '/two/index.ts' }),
   ], 12);
+  const rows = [...lanes.values()].flat();
   assert.equal(rows.length, 4);
   assert.equal(rows.find((row) => row.event.agent === 'Codex' && row.event.matched)?.count, 2);
-  assert.deepEqual(new Set(rows.map((row) => live.agentLane(row.event.agent))), new Set(['codex', 'claude']));
+  assert.deepEqual(new Set(lanes.keys()), new Set(['codex', 'claude']));
   assert.deepEqual(
     new Set(rows.filter((row) => !row.event.matched).map((row) => row.event.path)),
     new Set(['/one/index.ts', '/two/index.ts']),

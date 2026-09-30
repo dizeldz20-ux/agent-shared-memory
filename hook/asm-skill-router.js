@@ -158,7 +158,8 @@ function estimateTokens(text) {
 // (several installed skills carry multi-paragraph descriptions that way). Anything
 // fancier is ignored rather than mis-parsed.
 function parseFrontmatter(text) {
-  const src = text.replace(/^﻿/, '');
+  // A file saved on Windows ends its lines in CRLF: `(.*)$` would then match no line at all.
+  const src = text.replace(/^﻿/, '').replace(/\r\n?/g, '\n');
   if (!src.startsWith('---')) return {};
   const end = src.indexOf('\n---', 3);
   if (end === -1) return {};
@@ -889,6 +890,7 @@ function main() {
   let raw = '';
   process.stdin.on('data', (c) => (raw += c));
   process.stdin.on('end', () => {
+    if (process.env.ASM_JOB === '1') return; // ASM's own background jobs never feed ASM's hooks
     try {
       const p = JSON.parse(raw.replace(/^﻿/, ''));
       if (p && typeof p === 'object') dispatch(p);

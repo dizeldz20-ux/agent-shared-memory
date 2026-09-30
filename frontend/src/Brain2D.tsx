@@ -222,6 +222,9 @@ export const Brain2D = memo(function Brain2D({
   const initializedLayoutRef = useRef<Layout2D | null>(null);
   const initializedResetTokenRef = useRef(layoutResetToken);
   const backgroundPaths = useRef<BackgroundPathCache | null>(null);
+  // The graph rectangle currently on screen, refreshed once per frame before the
+  // nodes are drawn. It decides only who earns the expensive sprite.
+  const visibleRectRef = useRef<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   const backgroundRebuildRef = useRef({ generation: 0, frame: null as number | null, pending: false });
   const foregroundDragLinksRef = useRef<Set<AnatomicalLink2D>>(new Set());
   const deformedLinksRef = useRef<Set<AnatomicalLink2D>>(new Set());
@@ -986,7 +989,17 @@ export const Brain2D = memo(function Brain2D({
     const dim = focusIds && !isFocus ? (layout === 'rings' ? 0.1 : 0.16) : layout === 'rings' && n.layer === 'asm' ? 0.68 : 1;
     ctx.globalAlpha = dim;
 
-    const detailed = scale >= 2.35 || n.kind === 'root' || n.kind === 'dir' || activeNow || picked || isFocus || pulled;
+    // Crossing 2.35 promoted every one of the ~60,000 nodes to a full sprite at
+    // once, wherever they were on the map: measured on the live graph, the 95th
+    // percentile frame went from 17.5ms to 51.9ms on that single click, which is
+    // the stutter you feel as the zoom "sticking". Nodes far outside the view are
+    // still painted — as the micro dot, exactly as before, so no data is hidden —
+    // they simply stop paying for a sprite nobody can see.
+    const view = visibleRectRef.current;
+    const nearView = !view
+      || (n.x! >= view.x0 && n.x! <= view.x1 && n.y! >= view.y0 && n.y! <= view.y1);
+    const detailed = (nearView && (scale >= 2.35 || n.kind === 'root' || n.kind === 'dir'))
+      || activeNow || picked || isFocus || pulled;
     if (!detailed) {
       const screenRadius = n.kind === 'page' ? 0.82 : 0.58;
       const microRadius = Math.max(0.28, screenRadius / Math.max(0.2, scale));
@@ -1182,6 +1195,23 @@ export const Brain2D = memo(function Brain2D({
   }, [layout, rings]);
 
   const drawSceneBackground = useCallback((ctx: CanvasRenderingContext2D, scale: number) => {
+    // `onRenderFramePre` runs once per frame with the world transform already
+    // applied, so inverting it is the cheapest honest read of what is on screen.
+    try {
+      const inverse = ctx.getTransform().inverse();
+      const topLeft = inverse.transformPoint(new DOMPoint(0, 0));
+      const bottomRight = inverse.transformPoint(new DOMPoint(ctx.canvas.width, ctx.canvas.height));
+      const marginX = Math.abs(bottomRight.x - topLeft.x) * 0.3;
+      const marginY = Math.abs(bottomRight.y - topLeft.y) * 0.3;
+      visibleRectRef.current = {
+        x0: Math.min(topLeft.x, bottomRight.x) - marginX,
+        x1: Math.max(topLeft.x, bottomRight.x) + marginX,
+        y0: Math.min(topLeft.y, bottomRight.y) - marginY,
+        y1: Math.max(topLeft.y, bottomRight.y) + marginY,
+      };
+    } catch {
+      visibleRectRef.current = null;  // no transform to read: everyone stays eligible
+    }
     drawField(ctx, scale);
     drawBackgroundLinks(ctx, scale);
   }, [drawBackgroundLinks, drawField]);

@@ -214,7 +214,7 @@ function assertBrain3DContract(brain) {
   assert.equal(brain.bloomRadius, 0.1);
   assert.equal(brain.bloomThreshold, 0.82);
   assert.equal(brain.navigationEnabled, true);
-  assert.equal(brain.cameraMinDistance, 8);
+  assert.equal(brain.cameraMinDistance, 1.2);
   assert.equal(brain.cameraNear, 0.05);
   assert.equal(brain.brainInteriorRadius, 175);
   assert.ok(Array.isArray(brain.cameraPose) && brain.cameraPose.length === 6);
@@ -653,15 +653,40 @@ try {
     liveBrain.cameraPose.every((value, index) => Math.abs(value - wholeBrain.cameraPose[index]) < 0.05),
     'live CONNECTOME activity must preserve the complete camera pose',
   );
-  const traceAgents = new Set(await page.locator('[data-testid="live-trace"] .live-agent').allTextContents());
-  assert.ok(traceAgents.has('Codex'), 'fair live trace must retain Codex while another agent is busy');
-  assert.ok(traceAgents.has('Claude Code'), 'fair live trace must retain Claude while Codex is busy');
-  const claudeTraceColor = await page.locator('[data-testid="live-trace"] .live-trace-row')
-    .filter({ hasText: 'Claude Code' })
+  const traceAgents = new Set(await page.locator('[data-testid="live-trace"] .agent-name').allTextContents());
+  assert.ok(traceAgents.has('Codex'), 'the live trace must retain Codex while another agent is busy');
+  assert.ok(traceAgents.has('Claude Code'), 'the live trace must retain Claude while Codex is busy');
+  const claudeTraceColor = await page.locator('[data-testid="live-trace"] .agent-group.agent-claude .agent-head')
     .first()
     .evaluate((row) => getComputedStyle(row).borderInlineStartColor);
   assert.equal(claudeTraceColor, 'rgba(105, 204, 160, 0.8)', 'Claude must keep the shared system-green identity');
-  const traceFiles = await page.locator('[data-testid="live-trace"] .live-file').evaluateAll((nodes) => nodes.map((node) => ({
+
+  // Every live claim states its own age, and the strip and the trace head are
+  // the same reading — two numbers for one question is the defect this replaced.
+  const agentAges = await page.locator('[data-testid="live-trace"] .agent-age').allTextContents();
+  assert.ok(agentAges.length >= 2, 'every agent on the trace must print its own age');
+  assert.ok(agentAges.every((age) => /^(now|\d+s|\d+m( \d+s)?)$/.test(age.trim())), JSON.stringify(agentAges));
+  const rowAges = await page.locator('[data-testid="live-trace"] .live-age').allTextContents();
+  assert.ok(rowAges.length >= 2, 'every file row must print its own age');
+  assert.equal(
+    (await page.locator('[data-testid="live-trace-count"]').textContent())?.trim(),
+    (await page.locator('[data-testid="metric-agents"] strong').textContent())?.trim(),
+    'the metric strip and the trace head must print one roster reading',
+  );
+  assert.match(
+    (await page.locator('[data-testid="live-trace-count"]').textContent())?.trim() ?? '',
+    /^\d+\/\d+$/,
+    'a connected deck reports live/total, never a bare count',
+  );
+  // A hook-reported agent and one ASM inferred from a rollout file are not drawn alike.
+  const dotShapes = await page.locator('[data-testid="live-trace"] .agent-dot').evaluateAll((nodes) => nodes.map((node) => ({
+    source: node.getAttribute('data-source'),
+    radius: getComputedStyle(node).borderRadius,
+  })));
+  assert.ok(dotShapes.length >= 2 && dotShapes.every((dot) => dot.source === 'hook' || dot.source === 'inferred'), JSON.stringify(dotShapes));
+  assert.ok(dotShapes.filter((dot) => dot.source === 'hook').every((dot) => dot.radius === '50%'), JSON.stringify(dotShapes));
+
+  const traceFiles = await page.locator('[data-testid="live-trace"] .live-trace-row:not(.quiet) .live-file').evaluateAll((nodes) => nodes.map((node) => ({
     path: node.getAttribute('title'),
     text: node.textContent,
     width: node.getBoundingClientRect().width,
@@ -695,6 +720,26 @@ try {
   await page.waitForTimeout(450);
   const stableInterior = await readBrain3D(page);
   assert.ok(stableInterior.cameraDistance < 61, 'the interior camera must not snap back to the outside frame');
+
+  // Inside, the wheel must keep moving the camera. It used to pin at the floor:
+  // measured on the live graph, seventy-two further notches changed the camera by
+  // nothing at all, which is the whole reason the interior read as a still image.
+  const travelled = async (notches) => {
+    const before = (await readBrain3D(page)).cameraPose.slice(0, 3);
+    await page.mouse.move(800, 470);
+    for (let i = 0; i < notches; i++) await page.mouse.wheel(0, -160);
+    await page.waitForTimeout(420);
+    const after = (await readBrain3D(page)).cameraPose.slice(0, 3);
+    return Math.hypot(...after.map((value, index) => value - before[index]));
+  };
+  const firstLeg = await travelled(8);
+  assert.ok(firstLeg > 20, `the wheel must fly the camera through the interior (moved ${firstLeg})`);
+  const secondLeg = await travelled(8);
+  assert.ok(secondLeg > 20, `interior flight must have no floor to hit (second leg moved ${secondLeg})`);
+  const flying = await readBrain3D(page);
+  assert.ok(flying.cameraDistance > 1.3, 'flying must hold an orbit pivot ahead, not collapse onto it');
+  assert.equal(flying.selectedId, null, 'flying must not select a neuron');
+  assert.equal(flying.focusSize, 0, 'flying must not rebuild the focus subgraph');
   await page.locator('[data-testid="camera-whole"]').click();
   await page.waitForFunction(() => window.__asm?.brain3d?.cameraPreset === 'whole');
   await page.waitForTimeout(4500);
@@ -917,6 +962,51 @@ try {
   assert.equal(freeCameraAfter.focusSize, freeCameraBaseline.focusSize);
   assert.ok(freeCameraAfter.liveSignalSegmentCount > 0, 'the camera must stay fixed while the new live route renders');
   await freeCameraPage.close();
+
+  // Short windows, which a raised browser zoom produces. The responsive loop
+  // below only ever ran tall viewports, which is how a live trace whose body
+  // computed to ZERO height shipped: the rows were in the DOM and every
+  // presence assertion passed while there was nothing on screen to read.
+  for (const [width, height] of [[1306, 671], [980, 520], [860, 447], [700, 380]]) {
+    const shortPage = await browser.newPage({ viewport: { width, height } });
+    shortPage.on('response', (response) => response.status() >= 400 && secondaryFailedResponses.push(`${response.status()} ${response.url()}`));
+    shortPage.on('pageerror', (error) => secondaryErrors.push(error.message));
+    shortPage.on('console', (message) => message.type() === 'error' && secondaryErrors.push(message.text()));
+    await shortPage.route('**/favicon.ico', (route) => route.fulfill({ status: 204, body: '' }));
+    await shortPage.goto(ORIGIN, { waitUntil: 'networkidle' });
+    await shortPage.locator('[data-testid="asm-app"]').waitFor();
+    await sleep(2600);
+    const fit = await shortPage.evaluate(() => {
+      const box = (selector) => {
+        const element = document.querySelector(selector);
+        if (!element) return null;
+        const rect = element.getBoundingClientRect();
+        return { x: rect.x, y: rect.y, width: rect.width, height: rect.height, bottom: rect.bottom, right: rect.right, display: getComputedStyle(element).display };
+      };
+      const inViewport = (b) => Boolean(b && b.height > 0 && b.width > 0 && b.y >= -1 && b.bottom <= innerHeight + 1 && b.x >= -1 && b.right <= innerWidth + 1);
+      const trace = box('[data-testid="live-trace"]');
+      const metrics = box('[data-testid="brain-metrics"]');
+      const overlap = (a, b) => Boolean(a && b && b.display !== 'none' && a.x < b.right && b.x < a.right && a.y < b.bottom && b.y < a.bottom);
+      return {
+        tabs: inViewport(box('[data-testid="view-tabs"]')),
+        dock: inViewport(box('[data-testid="camera-dock"]')),
+        traceBodyHeight: box('.live-trace-body')?.height ?? 0,
+        traceRows: document.querySelectorAll('.live-trace-row').length,
+        traceMetricsOverlap: overlap(trace, metrics),
+        overflowX: document.documentElement.scrollWidth - innerWidth,
+        overflowY: document.documentElement.scrollHeight - innerHeight,
+      };
+    });
+    const where = `${width}x${height}`;
+    assert.equal(fit.tabs, true, `${where}: the mode tabs must stay reachable`);
+    assert.equal(fit.dock, true, `${where}: the camera dock must stay inside the window`);
+    assert.equal(fit.traceMetricsOverlap, false, `${where}: the bottom panels must not cover each other`);
+    assert.ok(fit.overflowX <= 0 && fit.overflowY <= 0, `${where}: overflow ${fit.overflowX}/${fit.overflowY}`);
+    if (fit.traceRows > 0) {
+      assert.ok(fit.traceBodyHeight > 24, `${where}: the live trace has ${fit.traceRows} rows in ${fit.traceBodyHeight}px of height`);
+    }
+    await shortPage.close();
+  }
 
   for (const [width, height] of [[1600, 900], [1100, 800], [860, 780]]) {
     const responsivePage = await browser.newPage({ viewport: { width, height } });

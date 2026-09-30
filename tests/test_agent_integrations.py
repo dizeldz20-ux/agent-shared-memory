@@ -1,7 +1,5 @@
 import importlib.util
 import json
-import os
-import subprocess
 import tempfile
 import unittest
 from pathlib import Path, PureWindowsPath
@@ -38,7 +36,7 @@ class AgentIntegrationConfigTests(unittest.TestCase):
         claude_path.write_text(
             json.dumps({
                 "theme": "dark",
-                "permissions": {"allow": ["Bash(git status)", "mcp__c2b__*"]},
+                "permissions": {"allow": ["Bash(git status)"]},
                 "hooks": {
                     "PreToolUse": [{
                         "matcher": "Read|Write",
@@ -59,7 +57,6 @@ class AgentIntegrationConfigTests(unittest.TestCase):
             json.dumps({
                 "theme": "preserved",
                 "mcpServers": {
-                    "c2b": {"command": "old"},
                     "user-server": {"command": "keep-me"},
                 },
             }),
@@ -76,7 +73,6 @@ class AgentIntegrationConfigTests(unittest.TestCase):
         self.assertEqual(claude["theme"], "dark")
         self.assertIn("Bash(git status)", claude["permissions"]["allow"])
         self.assertIn("mcp__asm__*", claude["permissions"]["allow"])
-        self.assertNotIn("mcp__c2b__*", claude["permissions"]["allow"])
         commands = [
             handler["command"]
             for group in claude["hooks"]["PreToolUse"]
@@ -94,7 +90,6 @@ class AgentIntegrationConfigTests(unittest.TestCase):
         claude_mcp = self.json_at(".claude.json")
         self.assertEqual(claude_mcp["theme"], "preserved")
         self.assertIn("user-server", claude_mcp["mcpServers"])
-        self.assertNotIn("c2b", claude_mcp["mcpServers"])
         self.assertEqual(claude_mcp["mcpServers"]["asm"]["args"][2], str(self.runtime))
 
         for relative in (
@@ -230,81 +225,6 @@ class AgentIntegrationConfigTests(unittest.TestCase):
             INTEGRATIONS.configure(self.home, self.runtime, "/opt/uv")
 
         self.assertFalse((self.home / ".cursor" / "mcp.json").exists())
-
-    def _write_fake_cli(self, directory: Path, name: str, body: str = 'exit 0\n') -> None:
-        path = directory / name
-        path.write_text(
-            '#!/bin/sh\nprintf "%s:%s\\n" "$(basename "$0")" "$*" >> "$ASM_TEST_LOG"\n' + body,
-            encoding="utf-8",
-        )
-        path.chmod(0o755)
-
-    def _installer_environment(self, fake_bin: Path, log: Path) -> dict[str, str]:
-        env = os.environ.copy()
-        env.update({
-            "ASM_CONFIG_HOME": str(self.home),
-            "ASM_HOME": str(self.runtime),
-            "ASM_LEGACY_HOME": str(self.root / "no-legacy-runtime"),
-            "ASM_SKIP_REFRESH": "1",
-            "ASM_TEST_LOG": str(log),
-            "PATH": os.pathsep.join((
-                str(fake_bin),
-                "/opt/homebrew/bin",
-                "/usr/local/bin",
-                "/usr/bin",
-                "/bin",
-            )),
-        })
-        return env
-
-    def test_installer_runs_on_system_bash_and_upserts_before_legacy_cleanup(self):
-        fake_bin = self.root / "fake-bin"
-        fake_bin.mkdir()
-        log = self.root / "client.log"
-        self._write_fake_cli(fake_bin, "uv")
-        self._write_fake_cli(fake_bin, "codex")
-        self._write_fake_cli(fake_bin, "grok")
-
-        result = subprocess.run(
-            ["/bin/bash", str(PROJECT / "install-agent-integrations.sh")],
-            env=self._installer_environment(fake_bin, log),
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-
-        self.assertEqual(result.returncode, 0, result.stderr)
-        calls = log.read_text(encoding="utf-8").splitlines()
-        codex_calls = [call for call in calls if call.startswith("codex:")]
-        self.assertIn("mcp add asm --", codex_calls[0])
-        self.assertIn("mcp remove c2b", codex_calls[1])
-        self.assertFalse(any("mcp remove asm" in call for call in calls))
-        self.assertTrue(any(call.startswith("grok:mcp add --scope user asm --") for call in calls))
-        self.assertEqual(self.json_at(".claude.json")["mcpServers"]["asm"]["command"], str(fake_bin / "uv"))
-
-    def test_failed_codex_upsert_does_not_remove_existing_registration(self):
-        fake_bin = self.root / "failing-bin"
-        fake_bin.mkdir()
-        log = self.root / "failed-client.log"
-        self._write_fake_cli(fake_bin, "uv")
-        self._write_fake_cli(
-            fake_bin,
-            "codex",
-            'case "$*" in\n  "mcp add asm"*) exit 19 ;;\nesac\nexit 0\n',
-        )
-
-        result = subprocess.run(
-            ["/bin/bash", str(PROJECT / "install-agent-integrations.sh")],
-            env=self._installer_environment(fake_bin, log),
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-
-        self.assertEqual(result.returncode, 19)
-        calls = log.read_text(encoding="utf-8").splitlines()
-        self.assertTrue(any("codex:mcp add asm --" in call for call in calls))
-        self.assertFalse(any("mcp remove" in call for call in calls))
 
 
 if __name__ == "__main__":

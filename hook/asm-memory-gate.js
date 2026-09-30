@@ -95,6 +95,7 @@ process.stdin.on('data', (chunk) => (raw += chunk));
 process.stdin.on('end', () => {
   let input;
   try { input = JSON.parse(raw.replace(/^\uFEFF/, '')); } catch { return allow(); }
+  if (process.env.ASM_JOB === '1') return allow(input); // ASM's own background jobs record themselves
   if (input.stop_hook_active || input.stopHookActive || Number(input.loop_count || 0) > 0) return allow(input);
 
   const session = safeSession(input.session_id || input.sessionId || input.conversation_id || input.conversationId);
@@ -134,6 +135,12 @@ Claude-compatible clients and asm__memory_record in Grok Build) with:
 
 Observed files:
 ${files}
+
+If the ASM MCP tools are not loaded in this session, record from the shell instead
+(the same fields as JSON, on stdin; no file is written; paste the three lines as they are):
+uv run --directory ${RUNTIME} python mcp_server.py --record <<'JSON'
+{"session_id": "${session}", "summary": "...", "details": "...", "files": ["..."]}
+JSON
 
 Do not store secrets or raw transcripts. Durable architectural facts should also get their own Obsidian page; memory_record appends the session narrative to today's daily note.`;
 

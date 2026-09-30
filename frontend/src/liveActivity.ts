@@ -1,4 +1,9 @@
 import type { BrainNode, LiveActivitySource, LiveEvent } from './types';
+import { agentLane } from './liveRoster';
+
+// The lane function lives with the roster that defines agent identity; it is
+// re-exported here so every existing caller keeps one import site.
+export { agentLane };
 
 export interface LiveFileActivity {
   event: LiveEvent;
@@ -25,13 +30,6 @@ const DOT_FILES = new Set([
   '.dockerignore', '.editorconfig', '.env', '.gitattributes', '.gitignore',
   '.npmrc', '.nvmrc', '.prettierignore', '.prettierrc', '.tool-versions',
 ]);
-
-export function agentLane(agent = 'Agent') {
-  if (/claude/i.test(agent)) return 'claude';
-  if (/codex/i.test(agent)) return 'codex';
-  if (/gemini/i.test(agent)) return 'gemini';
-  return agent.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-|-$/g, '') || 'agent';
-}
 
 /** Drop finished signal state even when no later WebSocket frame arrives. */
 export function pruneExpiredLiveState(
@@ -122,11 +120,16 @@ export function isFileAccessEvent(event: LiveEvent, nodes: Map<string, BrainNode
 }
 
 /**
- * Aggregate repeated access to the same file while reserving rows for every
- * agent. The representative event is always the newest; repeats stay visible
- * as a counter instead of silently disappearing from the trace.
+ * Group file access by agent — newest first, repeats folded into a count.
+ *
+ * There is no cross-agent competition for rows any more, because the trace draws
+ * one group per agent and caps each on its own. The flat list this replaced had
+ * to decide how much of itself each agent deserved, and its answer — one
+ * reserved row per agent regardless of age — is exactly what let a single Codex
+ * touch from ninety seconds ago sit beside Claude's current work, drawn the same
+ * and carrying no age of its own.
  */
-export function fairFileActivity(source: LiveEvent[], limit: number) {
+export function laneFileActivity(source: LiveEvent[], perLane: number) {
   const grouped = new Map<string, LiveFileActivity>();
   for (const event of [...source].sort((a, b) => b.ts - a.ts)) {
     const lane = agentLane(event.agent);
@@ -146,22 +149,10 @@ export function fairFileActivity(source: LiveEvent[], limit: number) {
     entries.push(item);
     lanes.set(lane, entries);
   }
-  const orderedLanes = [...lanes.values()].sort(
-    (a, b) => (b[0]?.event.ts ?? 0) - (a[0]?.event.ts ?? 0),
-  );
-  const selected: LiveFileActivity[] = [];
-  for (let depth = 0; selected.length < limit; depth++) {
-    let added = false;
-    for (const lane of orderedLanes) {
-      const item = lane[depth];
-      if (!item) continue;
-      selected.push(item);
-      added = true;
-      if (selected.length >= limit) break;
-    }
-    if (!added) break;
+  for (const [lane, entries] of lanes) {
+    lanes.set(lane, entries.sort((a, b) => b.event.ts - a.event.ts).slice(0, perLane));
   }
-  return selected.sort((a, b) => b.event.ts - a.event.ts);
+  return lanes;
 }
 
 /** Merge raw file access while replacing PreToolUse with its matching finish event. */

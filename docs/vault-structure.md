@@ -37,7 +37,7 @@ tags: [api, deploy, gotcha]   # tags matching a layer's xlayerTags → edge to t
 resource: /path/to/real/resource     # a path-like value → direct edge to that code file
 related: [other-page-id, another-id] # page-to-page edges in the knowledge graph
 contradictions: [superseded-id]      # when a page revises an older one — never overwrite silently
-aliases: [סוויפר, Sweeper]           # alternate/Hebrew names for recall only; never creates edges
+aliases: [סורק, Scanner]           # alternate/Hebrew names for recall only; never creates edges
 ---
 ```
 
@@ -46,8 +46,9 @@ prompt-recall hook match against, and what gets injected into an agent session a
 
 ## The okf/ bundle — the contract ASM consumes
 
-ASM does not parse markdown. It reads two JSON files that any generator can produce
-(a ~30-line frontmatter scraper over `wiki/main/**` is enough):
+ASM does not parse markdown. It reads two JSON files. The generator shipped in `tools/okf-build.mjs`
+writes both: copy it into `<vault>/okf/` once, and every refresh runs it. Any other generator that
+produces the same files works too (a ~30-line frontmatter scraper over `wiki/main/**` is enough):
 
 **`okf/catalog.json`**
 

@@ -5,51 +5,135 @@
 // Deployed copy: ~/.asm/hooks/asm-session-start.js
 
 const fs = require('fs');
+const { spawn } = require('child_process');
 const os = require('os');
 const path = require('path');
 const RUNTIME = process.env.ASM_HOME || path.join(os.homedir(), '.asm');
 const BRAIN = path.join(RUNTIME, 'brain.json');
-const PATHS = path.join(RUNTIME, 'asm-paths.json');
 const MEMORY = path.join(RUNTIME, 'memory.jsonl');
-
-function readJson(file) {
-  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; }
-}
-
-// The nightly consolidation (vault dreaming) died silently for 16 days once; its state
-// file is the only place that knows. One line here is what makes that visible.
-function dreamingLine() {
-  const vault = readJson(PATHS)?.vault;
-  if (!vault) return '';
-  const state = readJson(path.join(vault, 'dreaming', 'state.json'));
-  if (!state || !state.lastRun) return '';
-  const days = Math.floor((Date.now() - Date.parse(state.lastRun)) / 86400000);
-  if (!Number.isFinite(days)) return '';
-  const warn = days >= 2 ? ' — consolidation is not running; ask for /vault-dreaming' : '';
-  return `Dreaming: last ran ${days}d ago${warn}\n`;
-}
+const LEDGER = path.join(RUNTIME, 'lifecycle.jsonl');
+const JOBS = path.join(RUNTIME, 'jobs');
+const JOBS_CLI = path.join(JOBS, 'dist', 'runner', 'cli.js');
+const HOUR = 3600000;
+let lifecycle = null;
+try { lifecycle = require(path.join(__dirname, 'asm-lifecycle.js')); } catch { lifecycle = null; }
 
 // Unfinished work left by any agent in the last two days: the cheapest "what is open"
-// signal there is, and it lives in memory.jsonl rather than the 3-day-old graph. A raw
-// thread count (345 in one week) is noise; the record count plus the newest thread is not.
+// signal there is, and it lives in memory.jsonl rather than the 3-day-old graph. A thread the
+// ledger closed, or one on a superseded or retired record, is finished business. The newest
+// open thread is printed with its id, so the agent that finished it can close it.
+// (Vault dreaming used to report its age here; it is retired and the curator replaces it.)
 function openThreadsLine() {
   let text;
   try { text = fs.readFileSync(MEMORY, 'utf8'); } catch { return ''; }
-  const since = Date.now() - 2 * 86400000;
-  let records = 0;
-  let latest = null;
+  const parsed = [];
   for (const line of text.split('\n')) {
     if (!line.trim()) continue;
-    let record;
-    try { record = JSON.parse(line); } catch { continue; }
+    try { parsed.push(JSON.parse(line)); } catch { /* one bad line is not fatal */ }
+  }
+  const superseded = new Set(parsed.flatMap((r) => (r && Array.isArray(r.supersedes) ? r.supersedes : [])));
+  let life = null;
+  if (lifecycle) {
+    try { life = lifecycle.fold(lifecycle.loadOps(LEDGER), parsed); } catch { life = null; }
+  }
+  const since = Date.now() - 2 * 86400000;
+  let records = 0;
+  let open = 0;
+  let newest = null;
+  for (const record of parsed) {
+    if (!record || superseded.has(record.id) || (life && life.hidden('record', record.id))) continue;
     const at = Date.parse(record.created_at || '');
+    if (!(at >= since)) continue;
     const threads = Array.isArray(record.open_threads) ? record.open_threads : [];
-    if (!(at >= since) || !threads.length) continue;
+    const live = threads.map((_, index) => index).filter((index) => !life || life.threadOpen(record.id, index));
+    if (!live.length) continue;
     records += 1;
-    if (!latest || at > latest.at) latest = { at, thread: String(threads[0]) };
+    open += live.length;
+    if (!newest || at > newest.at) newest = { at, id: `${record.id}#${live[0]}`, text: String(threads[live[0]]) };
   }
   if (!records) return '';
-  return `Open threads: ${records} record(s) in the last 2 days ended with unfinished work — latest: "${latest.thread.slice(0, 120)}" (mcp__asm__memory_recent for the rest)\n`;
+  return `Open threads: ${open} open in ${records} record(s) from the last 2 days — newest: ${newest.id} "${newest.text.slice(0, 120)}" (close finished ones with memory_record(resolves=[id]))\n`;
+}
+
+function readJsonFile(file) {
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; }
+}
+
+function ago(iso) {
+  const at = Date.parse(iso || '');
+  if (!Number.isFinite(at)) return 'at an unknown time';
+  const hours = Math.floor((Date.now() - at) / HOUR);
+  return hours < 48 ? `${hours}h ago` : `${Math.floor(hours / 24)}d ago`;
+}
+
+function pendingProposals() {
+  let count = 0;
+  try {
+    for (const name of fs.readdirSync(path.join(JOBS, 'proposals'))) {
+      if (!name.endsWith('.json')) continue;
+      const run = readJsonFile(path.join(JOBS, 'proposals', name));
+      for (const proposal of (run && run.proposals) || []) if (proposal.status === 'pending') count += 1;
+    }
+  } catch { /* no proposals yet */ }
+  return count;
+}
+
+// The background jobs (janitor, curator, refresh) report here, and loudly: vault dreaming
+// once failed every night for 47 days behind a wrapper that exited 0.
+function jobsLine() {
+  const state = readJsonFile(path.join(JOBS, 'state.json'));
+  const parts = [];
+  for (const job of ['janitor', 'curator', 'refresh']) {
+    const entry = state && state[job];
+    if (!entry) continue;
+    const failedLast = entry.last_error && (!entry.last_success || Date.parse(entry.last_error) > Date.parse(entry.last_success));
+    if (failedLast) parts.push(`${job} FAILED ${ago(entry.last_error)}: ${String(entry.error_text || '').slice(0, 120)}`);
+    else if (entry.last_success && Date.now() - Date.parse(entry.last_success) > 48 * HOUR) parts.push(`${job} last succeeded ${ago(entry.last_success)}; see ~/.asm/jobs/logs`);
+    else if (entry.last_success) parts.push(`${job} ok ${ago(entry.last_success)}`);
+  }
+  // A job that dies at import writes no state at all: a launch nothing reported after is shown too.
+  const launch = readJsonFile(path.join(JOBS, 'launch.json'));
+  const launchedAt = Date.parse((launch && launch.at) || '');
+  if (Number.isFinite(launchedAt) && Date.now() - launchedAt > 2 * HOUR) {
+    const reported = ['janitor', 'curator', 'refresh'].some((job) => {
+      const entry = state && state[job];
+      return entry && [entry.last_success, entry.last_error].some((iso) => Date.parse(iso || '') >= launchedAt);
+    });
+    if (!reported) parts.push(`jobs launched ${ago(launch.at)} and never reported — see ~/.asm/jobs/logs`);
+  }
+  const pending = pendingProposals();
+  if (pending) parts.push(`${pending} proposal(s) wait for review: /asm-review`);
+  return parts.length ? `Jobs: ${parts.join(' · ')}\n` : '';
+}
+
+function lockAlive() {
+  const lock = readJsonFile(path.join(JOBS, 'run.lock'));
+  if (!lock || typeof lock.pid !== 'number') return false;
+  try { process.kill(lock.pid, 0); } catch (error) { if (error.code !== 'EPERM') return false; }
+  return Date.now() - Date.parse(lock.started_at || '') < 2 * HOUR;
+}
+
+// The jobs run from here, detached, rather than from launchd: a launchd job cannot read the
+// vault on the Desktop and gets 256 file descriptors, which is what killed vault dreaming.
+function launchDueJobs() {
+  if (!fs.existsSync(JOBS_CLI)) return;
+  const janitor = (readJsonFile(path.join(JOBS, 'state.json')) || {}).janitor || {};
+  const since = (iso) => { const at = Date.parse(iso || ''); return Number.isFinite(at) ? Date.now() - at : Infinity; };
+  // A run that keeps failing waits longer each time: 1, 2, 4 … hours, at most a day.
+  const backoff = Math.min(24, 2 ** Math.max(0, (Number(janitor.consecutive_failures) || 0) - 1)) * HOUR;
+  if (since(janitor.last_success) < 20 * HOUR || since(janitor.last_error) < backoff || lockAlive()) return;
+  fs.mkdirSync(path.join(JOBS, 'logs'), { recursive: true });
+  const log = fs.openSync(path.join(JOBS, 'logs', `${new Date().toISOString().slice(0, 10)}.log`), 'a');
+  // Node itself lowers the jobs (Windows has no `nice`), and a spawn error must not fail the hook.
+  const child = spawn(process.execPath, [JOBS_CLI, 'run', '--job', 'all'], {
+    detached: true, windowsHide: true, stdio: ['ignore', log, log], env: { ...process.env, ASM_JOB: '1' },
+  });
+  child.on('error', (error) => {
+    try { fs.writeSync(log, `${new Date().toISOString()} the jobs could not start: ${error.message}\n`); } catch { /* nothing to tell */ }
+  });
+  if (child.pid) try { os.setPriority(child.pid, 10); } catch { /* the jobs still run, at normal priority */ }
+  try { fs.writeFileSync(path.join(JOBS, 'launch.json'), JSON.stringify({ at: new Date().toISOString(), pid: child.pid ?? null })); } catch { /* the banner just cannot tell */ }
+  child.unref();
 }
 
 function hookInput() {
@@ -75,6 +159,8 @@ function isCursor(input) {
 
 try {
   const input = hookInput();
+  // ASM's own background jobs run headless agents; they never get the primer.
+  if (process.env.ASM_JOB === '1') process.exit(0);
   const b = JSON.parse(fs.readFileSync(BRAIN, 'utf8'));
   const counts = {};
   for (const n of b.nodes) counts[n.layer] = (counts[n.layer] || 0) + 1;
@@ -84,12 +170,12 @@ try {
     .map(([l, c]) => `${l}:${c}`)
     .join(' ');
   const ageDays = Math.floor((Date.now() - Date.parse(b.generatedAt)) / 86400000);
-  // 3d, not 7: the Stop hook refreshes daily (debounced), so >=3d means the automation broke.
+  // 3d, not 7: the daily jobs refresh the graph (launched below), so >=3d means the automation broke.
   const stale = ageDays >= 3 ? `  (${ageDays}d old — run the ASM refresh script)` : '';
 
   const context = `ASM — AGENT SHARED MEMORY ONLINE. One graph for the Obsidian vault + all mapped project code.
 Mapped: ${layers} | ${b.nodes.length} nodes${stale}
-${dreamingLine()}${openThreadsLine()}
+${openThreadsLine()}${jobsLine()}
 STANDING RULE for every agent — recall before reading; record after changing:
 - Before the first Read/Edit of any file in a mapped project, call mcp__asm__brain_context(file_path).
   Its vault_pages field returns what a human already wrote about that file: the traps, the decisions.
@@ -109,4 +195,5 @@ Full protocol + write-back: skill \`agent-shared-memory\`.
   } else {
     process.stdout.write(context);
   }
+  try { launchDueJobs(); } catch { /* a job that cannot start must never cost the session */ }
 } catch { /* brain not installed on this machine — stay silent */ }
