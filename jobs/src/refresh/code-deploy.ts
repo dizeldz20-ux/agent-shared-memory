@@ -6,7 +6,7 @@ import { mirror } from './mirror.js';
 import { RefreshError, type RefreshLog, type RefreshOptions } from './refresh.types.js';
 
 const CODE = ['mcp_server.py', 'asm_text.py', 'lifecycle.py'];
-const HOOKS = ['asm-activity-hook.js', 'asm-session-start.js', 'asm-prompt-recall.js', 'asm-memory-gate.js', 'asm-skill-router.js', 'asm-lifecycle.js'];
+const HOOKS = ['asm-activity-hook.js', 'asm-session-start.js', 'asm-prompt-recall.js', 'asm-memory-gate.js', 'asm-skill-router.js', 'asm-recall-gate.js', 'asm-lifecycle.js'];
 const SKILLS = ['agent-shared-memory', 'asm-review'];
 
 /** The code half of a full refresh: the MCP server, hooks, jobs and skills every agent runs. */

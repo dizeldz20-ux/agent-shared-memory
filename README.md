@@ -216,7 +216,8 @@ The server expects a production frontend in `frontend/dist`. Build it with `npm 
     ├── asm-prompt-recall.js
     ├── asm-activity-hook.js
     ├── asm-memory-gate.js
-    └── asm-skill-router.js   # Claude Code only: SKILL.state-style skill routing (see docs/implementation-notes.md)
+    ├── asm-skill-router.js   # Claude Code only: SKILL.state-style skill routing (see docs/implementation-notes.md)
+    └── asm-recall-gate.js    # Claude Code only: bounces a prompt's first code search into a mapped project to ASM once
 ```
 
 ## Privacy and security
