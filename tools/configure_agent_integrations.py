@@ -22,14 +22,18 @@ ASM_HOOK_FILES = {
     "asm-activity-hook.js",
     "asm-memory-gate.js",
     "asm-skill-router.js",
+    "asm-recall-gate.js",
 }
-# The skill router speaks Claude Code's Skill tool and skill roots; other clients get
-# only the shared memory hooks. The PreToolUse matcher keeps it off Read/Grep/MCP calls.
-SKILL_ROUTER_EVENTS = {
-    "SessionStart": ("asm-skill-router.js", 10, None),
-    "UserPromptSubmit": ("asm-skill-router.js", 10, None),
-    "PreToolUse": ("asm-skill-router.js", 5, "Skill|Write|Edit|MultiEdit|NotebookEdit|Bash"),
-}
+# The skill router speaks Claude Code's Skill tool and skill roots, and the recall gate
+# answers in Claude Code's PreToolUse decision format; other clients get only the shared
+# memory hooks. The router's matcher keeps it off Read/Grep/MCP calls.
+CLAUDE_ONLY_HOOKS = (
+    ("SessionStart", "asm-skill-router.js", 10, None),
+    ("UserPromptSubmit", "asm-skill-router.js", 10, None),
+    ("PreToolUse", "asm-skill-router.js", 5, "Skill|Write|Edit|MultiEdit|NotebookEdit|Bash"),
+    ("UserPromptSubmit", "asm-recall-gate.js", 5, None),
+    ("PreToolUse", "asm-recall-gate.js", 5, "Grep|Glob|Bash|mcp__asm__.*"),
+)
 KIMI_BLOCK_START = "# >>> ASM managed hooks >>>"
 KIMI_BLOCK_END = "# <<< ASM managed hooks <<<"
 
@@ -169,14 +173,15 @@ def merge_grouped_hooks(
         groups.append({"hooks": [handler]})
     if not include_skill_router:
         return
-    for event, (filename, timeout, matcher) in SKILL_ROUTER_EVENTS.items():
+    # The main loop above already stripped every managed handler for events it selected;
+    # events it did not select are cleaned here, once each, so a re-run stays idempotent.
+    for event in {event for event, *_ in CLAUDE_ONLY_HOOKS} - set(selected):
         groups = hooks.setdefault(event, [])
         if not isinstance(groups, list):
             raise ConfigError(f"hooks.{event} must be a JSON object")
-        # The main loop above already stripped every managed handler for events it
-        # selected; events it did not select are cleaned here so a re-run stays idempotent.
-        if event not in selected:
-            groups[:] = _without_managed_grouped_handlers(groups)
+        groups[:] = _without_managed_grouped_handlers(groups)
+    for event, filename, timeout, matcher in CLAUDE_ONLY_HOOKS:
+        groups = hooks.setdefault(event, [])
         group: dict[str, Any] = {"hooks": [{
             "type": "command",
             "command": hook_command(runtime, filename),

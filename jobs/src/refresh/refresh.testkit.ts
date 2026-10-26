@@ -45,7 +45,7 @@ export function sandbox(): Sandbox {
   };
 }
 
-export const HOOKS = ['asm-activity-hook.js', 'asm-session-start.js', 'asm-prompt-recall.js', 'asm-memory-gate.js', 'asm-skill-router.js', 'asm-lifecycle.js'];
+export const HOOKS = ['asm-activity-hook.js', 'asm-session-start.js', 'asm-prompt-recall.js', 'asm-memory-gate.js', 'asm-skill-router.js', 'asm-recall-gate.js', 'asm-lifecycle.js'];
 
 export interface Call { readonly name: string; readonly args: readonly string[]; readonly cwd: string | undefined }
 
